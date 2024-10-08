@@ -5,6 +5,8 @@ import discord
 from discord.ext import commands
 from discord import ui
 import pytz
+import time
+import asyncio
 from datetime import datetime
 
 with open('keys/digitaloceanapi.key', 'r') as file:
@@ -30,29 +32,28 @@ def load_settings():
     if os.path.exists('settings.json'):
         with open('settings.json', 'r') as f:
             return json.load(f)
-    return {'authorized_roles': [], 'saved_embed': None}
+    return {'authorized_roles': []}
 
 settings = load_settings()
 authorized_roles = settings.get('authorized_roles', [])
-saved_embed_data = settings.get('saved_embed')
 
 def save_settings():
     with open('settings.json', 'w') as f:
-        json.dump({'authorized_roles': authorized_roles, 'saved_embed': saved_embed_data}, f)
+        json.dump({'authorized_roles': authorized_roles}, f)
 
 def perform_droplet_action(action_type):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
     data = {'type': action_type}
     response = requests.post(url, headers=headers, json=data)
-    return "Action initiated successfully." if response.status_code == 201 else f"Failed to perform action: {response.content}"
+    return "Action initiated successfully." if response.status_code == 201 else f"❌ Failed to perform action: {response.content}"
 
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
     data = {'type': 'resize', 'size': new_size}
     response = requests.post(url, headers=headers, json=data)
-    return "Droplet resizing initiated successfully." if response.status_code == 201 else f"Failed to resize droplet: {response.content}"
+    return "Droplet resizing initiated successfully." if response.status_code == 201 else f"❌ Failed to resize droplet: {response.content}"
 
 class DropletManagementView(ui.View):
     def __init__(self):
@@ -66,13 +67,13 @@ class DropletManagementView(ui.View):
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
 
-    @ui.button(label="Resize (1GB)", style=discord.ButtonStyle.primary, custom_id="resize_1gb")
-    async def resize_1gb(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @ui.button(label="Resize Peak Usage (s-4vcpu-16gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_high")
+    async def resize_high(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", PEAK_USAGE)
 
-    @ui.button(label="Resize (512MB)", style=discord.ButtonStyle.primary, custom_id="resize_512mb")
-    async def resize_512mb(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @ui.button(label="Resize Low Usage (s-2vcpu-8gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_low")
+    async def resize_low(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", LOW_USAGE)
 
@@ -120,21 +121,15 @@ class ConfirmationView(ui.View):
         self.stop()
 
 async def create_embed(ctx_or_interaction):
-    global saved_embed_data
-    if saved_embed_data:
-        embed = discord.Embed.from_dict(saved_embed_data)
-    else:
-        embed = discord.Embed(
-            title="🔧 Droplet Management",
-            description="Easily manage your DigitalOcean droplet using the buttons below.",
-            color=discord.Color.blue()
-        )
-        embed.set_thumbnail(url="https://example.com/droplet_icon.png")
-        embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet.", inline=False)
-        embed.add_field(name="⚡ Power", value="Power on/off your droplet or reboot it.", inline=False)
-        embed.set_footer(text="Manage your DigitalOcean resources efficiently.")
-        saved_embed_data = embed.to_dict()
-        save_settings()
+    embed = discord.Embed(
+        title="🔧 FoundationX Droplet Management",
+        description="Easily manage the FX DigitalOcean droplet using the functions below.",
+        color=discord.Color.blue()
+    )
+    #embed.set_thumbnail("/droplet_icon.png")
+    embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet for optimal performance during low usage and high usage.", inline=False)
+    embed.add_field(name="⚡ Power", value="Power on/off the droplet or reboot it.", inline=False)
+    embed.set_footer(text="Created by EthanSpleefan.")
 
     view = DropletManagementView()
 
@@ -146,7 +141,10 @@ async def create_embed(ctx_or_interaction):
 @bot.event
 async def on_message(message):
     if message.content.lower() == VINNY_COMMAND:
-        await message.channel.send("Action confirmed! Performing the requested operation...")
+        await message.delete()
+        sent_message = await message.channel.send("Action confirmed! Performing the requested operation...")
+        await asyncio.sleep(4)
+        await sent_message.delete()
     await bot.process_commands(message)
 
 @bot.event
@@ -173,7 +171,7 @@ async def set_roles(ctx, *role_ids):
     save_settings()
     await ctx.send("Authorized roles updated successfully.")
 
-@bot.tree.command(name="create_embed", description="Create an improved embed for droplet management")
+@bot.tree.command(name="create_embed", description="Create the embed for FoundationX droplet management")
 async def slash_create_embed(interaction: discord.Interaction):
     await create_embed(interaction)
 
