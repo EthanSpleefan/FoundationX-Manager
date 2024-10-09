@@ -4,10 +4,7 @@ import requests
 import discord
 from discord.ext import commands
 from discord import ui
-import pytz
-import time
 import asyncio
-from datetime import datetime
 
 with open('keys/digitaloceanapi.key', 'r') as file:
     do_api_secret = file.read().strip()
@@ -32,39 +29,46 @@ def load_settings():
     if os.path.exists('settings.json'):
         with open('settings.json', 'r') as f:
             return json.load(f)
-    return {'authorized_roles': [], 'authorized_user_ids': [], 'response_channel_id': None}
+    return {'authorized_roles': [], 'authorized_users': []}
 
 settings = load_settings()
-authorized_roles = settings.get('authorized_roles', [])
-authorized_user_ids = settings.get('authorized_user_ids', [])
-response_channel_id = settings.get('response_channel_id')
+authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
+authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
 
 def save_settings():
     with open('settings.json', 'w') as f:
-        json.dump({'authorized_roles': authorized_roles, 'authorized_user_ids': authorized_user_ids, 'response_channel_id': response_channel_id}, f)
+        json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users}, f)
 
 def perform_droplet_action(action_type):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
     data = {'type': action_type}
     response = requests.post(url, headers=headers, json=data)
-    return "Action initiated successfully." if response.status_code == 201 else f"❌ Failed to perform action: {response.content}"
+    
+    if response.status_code == 201:
+        return "Action initiated successfully."
+    else:
+        return f"❌ Failed to perform action: {response.content.decode()}"
 
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
     data = {'type': 'resize', 'size': new_size}
     response = requests.post(url, headers=headers, json=data)
-    return "Droplet resizing initiated successfully." if response.status_code == 201 else f"❌ Failed to resize droplet: {response.content}"
+    
+    if response.status_code == 201:
+        return "Droplet resizing initiated successfully."
+    else:
+        return f"❌ Failed to resize droplet: {response.content.decode()}"
 
 class DropletManagementView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     async def check_permissions(self, interaction):
-        if not authorized_roles:
+        if not authorized_roles and not authorized_users:
             return True
-        if any(role.id in authorized_roles for role in interaction.user.roles):
+        if any(role.id in authorized_roles for role in interaction.user.roles) or interaction.user.id in authorized_users:
             return True
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
@@ -128,7 +132,6 @@ async def create_embed(ctx_or_interaction):
         description="Easily manage the FX DigitalOcean droplet using the functions below.",
         color=discord.Color.blue()
     )
-    #embed.set_thumbnail("/droplet_icon.png")
     embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet for optimal performance during low usage and high usage.", inline=False)
     embed.add_field(name="⚡ Power", value="Power on/off the droplet or reboot it.", inline=False)
     embed.set_footer(text="Created by EthanSpleefan.")
@@ -142,9 +145,6 @@ async def create_embed(ctx_or_interaction):
 
 @bot.event
 async def on_message(message):
-    if response_channel_id and message.channel.id != response_channel_id:
-        return
-
     if message.content.lower() == VINNY_COMMAND:
         await message.delete()
         sent_message = await message.channel.send("Action confirmed! Performing the requested operation...")
@@ -169,64 +169,47 @@ async def create_embed_command(ctx):
 async def embed_command(ctx):
     await create_embed(ctx)
 
-@bot.command(name='set_roles')
-async def set_roles_command(ctx, *role_ids: int):
-    if not authorized_roles and not authorized_user_ids:
-        await ctx.send("No authorized roles or user IDs set. Please contact the administrator.")
-        return
+@bot.command(name="reload")
+async def reload_json(ctx):
+    global authorized_roles, authorized_users
+    settings = load_settings()
+    authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
+    authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
+    await ctx.send("Reloaded settings successfully! ✅")
 
-    if not any(role.id in authorized_roles for role in ctx.author.roles) and ctx.author.id not in authorized_user_ids:
-        await ctx.send("You do not have permission to use this command.")
-        return
-    
+@bot.command(name='add_role')
+async def set_roles(ctx, *role_ids):
+    global authorized_roles
 
-    authorized_roles = list(role_ids)
-    save_settings()
-    await ctx.send("Authorized roles updated successfully.")
+    # Check if the user has permission to modify roles
+    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in authorized_users:
+        new_roles = list(map(int, role_ids))
+        for role_id in new_roles:
+            if role_id not in authorized_roles:
+                authorized_roles.append(role_id)
+        save_settings()
+        await ctx.send("Authorized roles updated successfully ✅.")
+    else:
+        await ctx.send("ERROR ❌: You are not authorized to access this function!")
+        print(f"Authorized Roles: {authorized_roles}")
+        print(f"Authorized Users: {authorized_users}")
 
-@bot.command(name='set_channel')
-async def set_channel_command(ctx, channel_id: int):
-    if not authorized_roles and not authorized_user_ids:
-        await ctx.send("No authorized roles or user IDs set. Please contact the administrator.")
-        return
+@bot.command(name='add_user')
+async def authorized_user(ctx, *user_ids):
+    global authorized_users
 
-    if not any(role.id in authorized_roles for role in ctx.author.roles) and ctx.author.id not in authorized_user_ids:
-        await ctx.send("You do not have permission to use this command.")
-        return
-
-    global response_channel_id
-    response_channel_id = channel_id
-    save_settings()
-    await ctx.send(f"Response channel set to <#{channel_id}> successfully.")
-
-@bot.tree.command(name='set_roles', description="Set the authorized roles for the bot")
-async def slash_set_roles(interaction: discord.Interaction, *role_ids: int):
-    if not authorized_roles and not authorized_user_ids:
-        await interaction.response.send_message("No authorized roles or user IDs set. Please contact the administrator.", ephemeral=True)
-        return
-
-    if not any(role.id in authorized_roles for role in interaction.user.roles) and interaction.user.id not in authorized_user_ids:
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
-
-    authorized_roles = list(role_ids)
-    save_settings()
-    await interaction.response.send_message("Authorized roles updated successfully.", ephemeral=True)
-
-@bot.tree.command(name='set_channel', description="Set the response channel for the bot")
-async def slash_set_channel(interaction: discord.Interaction, channel_id: int):
-    if not authorized_roles and not authorized_user_ids:
-        await interaction.response.send_message("No authorized roles or user IDs set. Please contact the administrator.", ephemeral=True)
-        return
-
-    if not any(role.id in authorized_roles for role in interaction.user.roles) and interaction.user.id not in authorized_user_ids:
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
-
-    global response_channel_id
-    response_channel_id = channel_id
-    save_settings()
-    await interaction.response.send_message(f"Response channel set to <#{channel_id}> successfully.", ephemeral=True)
+    # Check if the user has permission to modify users
+    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in authorized_users:
+        new_users = list(map(int, user_ids))
+        for user_id in new_users:
+            if user_id not in authorized_users:
+                authorized_users.append(user_id)
+        save_settings()
+        await ctx.send("Authorized users updated successfully ✅.")
+    else:
+        await ctx.send("ERROR ❌: You are not authorized to access this function!")
+        print(f"Authorized Roles: {authorized_roles}")
+        print(f"Authorized Users: {authorized_users}")
 
 @bot.tree.command(name="create_embed", description="Create the embed for FoundationX droplet management")
 async def slash_create_embed(interaction: discord.Interaction):
