@@ -169,6 +169,36 @@ async def create_embed_command(ctx):
 async def embed_command(ctx):
     await create_embed(ctx)
 
+@bot.command(name='set_roles')
+async def set_roles_command(ctx, *role_ids: int):
+    if not authorized_roles and not authorized_user_ids:
+        await ctx.send("No authorized roles or user IDs set. Please contact the administrator.")
+        return
+
+    if not any(role.id in authorized_roles for role in ctx.author.roles) and ctx.author.id not in authorized_user_ids:
+        await ctx.send("You do not have permission to use this command.")
+        return
+    
+
+    authorized_roles = list(role_ids)
+    save_settings()
+    await ctx.send("Authorized roles updated successfully.")
+
+@bot.command(name='set_channel')
+async def set_channel_command(ctx, channel_id: int):
+    if not authorized_roles and not authorized_user_ids:
+        await ctx.send("No authorized roles or user IDs set. Please contact the administrator.")
+        return
+
+    if not any(role.id in authorized_roles for role in ctx.author.roles) and ctx.author.id not in authorized_user_ids:
+        await ctx.send("You do not have permission to use this command.")
+        return
+
+    global response_channel_id
+    response_channel_id = channel_id
+    save_settings()
+    await ctx.send(f"Response channel set to <#{channel_id}> successfully.")
+
 @bot.tree.command(name='set_roles', description="Set the authorized roles for the bot")
 async def slash_set_roles(interaction: discord.Interaction, *role_ids: int):
     if not authorized_roles and not authorized_user_ids:
@@ -178,7 +208,7 @@ async def slash_set_roles(interaction: discord.Interaction, *role_ids: int):
     if not any(role.id in authorized_roles for role in interaction.user.roles) and interaction.user.id not in authorized_user_ids:
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
-    
+
     authorized_roles = list(role_ids)
     save_settings()
     await interaction.response.send_message("Authorized roles updated successfully.", ephemeral=True)
