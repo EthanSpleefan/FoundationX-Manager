@@ -16,13 +16,14 @@ with open('keys/vinnycommand.key', 'r') as file:
     VINNY_COMMAND = file.read().strip()
 
 API_TOKEN = do_api_secret
-DROPLET_ID = '449984469'
+DROPLET_ID = '448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
+
 
 # Load or initialize settings
 def load_settings():
@@ -155,6 +156,7 @@ async def on_message(message):
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FX Systems"))
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
