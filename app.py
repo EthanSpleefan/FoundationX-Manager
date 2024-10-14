@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 from discord import ui
 import asyncio
-import aioping
+import ping3  # Changed to use ping3 library
 
 with open('keys/digitaloceanapi.key', 'r') as file:
     do_api_secret = file.read().strip()
@@ -231,15 +231,16 @@ async def slash_panel_link(interaction: discord.Interaction):
 
 @bot.tree.command(name="ping", description="Ping the server to check if it is accessible from the public internet.")
 async def ping_server(interaction: discord.Interaction):
-    ip_address = ""
+    ip_address = "1.1.1.1"
     
     try:
-        # Use aioping to ping the server
-        delay = await aioping.ping(ip_address)
-        await interaction.response.send_message(f"Ping successful! Time: {delay * 1000:.2f} ms")
-    except asyncio.TimeoutError:
-        await interaction.response.send_message("Ping failed: Request timed out. Please check the server status.")
+        # Use ping3 to ping the server
+        delay = ping3.ping(ip_address)
+        if delay is not None:
+            await interaction.response.send_message(f"Ping successful! ✅ Time: {delay * 1000:.2f} ms")
+        else:
+            await interaction.response.send_message("Ping failed ❌: No response from the server!")
     except Exception as e:
-        await interaction.response.send_message(f"An unexpected error occurred while pinging: {str(e)}")
+        await interaction.response.send_message(f"An unexpected error occurred while pinging ⚠️: {str(e)}")
 
 bot.run(discord_api_secret)
