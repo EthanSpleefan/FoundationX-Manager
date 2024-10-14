@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 from discord import ui
 import asyncio
+import aioping
 
 with open('keys/digitaloceanapi.key', 'r') as file:
     do_api_secret = file.read().strip()
@@ -19,6 +20,7 @@ API_TOKEN = do_api_secret
 DROPLET_ID = '448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
+HIGH_USAGE = 's-v8cpu-16gb-amd'
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -73,6 +75,12 @@ class DropletManagementView(ui.View):
             return True
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
+    
+    @ui.button(label="Resize HIGH Usage (s-8vcpu-16gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_super")
+    async def resize_super(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if await self.check_permissions(interaction):
+            await self.ask_for_confirmation(interaction, "resize", HIGH_USAGE)
+
 
     @ui.button(label="Resize Peak Usage (s-4vcpu-16gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_high")
     async def resize_high(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -213,8 +221,25 @@ async def authorized_user(ctx, *user_ids):
         print(f"Authorized Roles: {authorized_roles}")
         print(f"Authorized Users: {authorized_users}")
 
-@bot.tree.command(name="create_embed", description="Create the embed for FoundationX droplet management")
+@bot.tree.command(name="embed", description="Create the embed for FoundationX droplet management")
 async def slash_create_embed(interaction: discord.Interaction):
     await create_embed(interaction)
+    
+@bot.tree.command(name="panel", description="FX Systems Pterodactyl Panel")
+async def slash_panel_link(interaction: discord.Interaction):
+    await interaction.response.send_message("Pterodactyl Panel: https://panel.foundationxservers.com/")
+
+@bot.tree.command(name="ping", description="Ping the server to check if it is accessible from the public internet.")
+async def ping_server(interaction: discord.Interaction):
+    ip_address = ""
+    
+    try:
+        # Use aioping to ping the server
+        delay = await aioping.ping(ip_address)
+        await interaction.response.send_message(f"Ping successful! Time: {delay * 1000:.2f} ms")
+    except asyncio.TimeoutError:
+        await interaction.response.send_message("Ping failed: Request timed out. Please check the server status.")
+    except Exception as e:
+        await interaction.response.send_message(f"An unexpected error occurred while pinging: {str(e)}")
 
 bot.run(discord_api_secret)
