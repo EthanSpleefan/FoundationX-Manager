@@ -76,18 +76,18 @@ class DropletManagementView(ui.View):
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
     
-    @ui.button(label="Resize HIGH Usage (s-8vcpu-16gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_super")
+    @ui.button(label="High Usage (8vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_super")
     async def resize_super(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", HIGH_USAGE)
 
 
-    @ui.button(label="Resize Peak Usage (s-4vcpu-16gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_high")
+    @ui.button(label="Peak Usage (4vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_high")
     async def resize_high(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", PEAK_USAGE)
 
-    @ui.button(label="Resize Low Usage (s-2vcpu-8gb-amd)", style=discord.ButtonStyle.primary, custom_id="resize_low")
+    @ui.button(label="Low Usage (2vcpu-8gb)", style=discord.ButtonStyle.primary, custom_id="resize_low")
     async def resize_low(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", LOW_USAGE)
@@ -237,10 +237,10 @@ async def ping_server(interaction: discord.Interaction):
         # Use ping3 to ping the server
         delay = ping3.ping(ip_address)
         if delay is not None:
-            await interaction.response.send_message(f"Ping successful! ✅ Time: {delay * 1000:.2f} ms")
+            await interaction.response.send_message(f"✅ Ping successful, Time: {delay * 1000:.2f} ms")
         else:
-            await interaction.response.send_message("Ping failed ❌: No response from the server!")
+            await interaction.response.send_message("❌ Ping failed: No response from the server!")
     except Exception as e:
-        await interaction.response.send_message(f"An unexpected error occurred while pinging ⚠️: {str(e)}")
+        await interaction.response.send_message(f"⚠️ An unexpected error occurred while pinging: {str(e)}")
 
 bot.run(discord_api_secret)
