@@ -5,7 +5,16 @@ import discord
 from discord.ext import commands
 from discord import ui
 import asyncio
-import ping3  # Changed to use ping3 library
+import ping3 
+import paramiko
+import io
+import sys
+import platform
+
+if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 with open('keys/digitaloceanapi.key', 'r') as file:
     do_api_secret = file.read().strip()
@@ -16,11 +25,17 @@ with open('keys/discordapi.key', 'r') as file:
 with open('keys/vinnycommand.key', 'r') as file:
     VINNY_COMMAND = file.read().strip()
 
+#Setup Variables
+
 API_TOKEN = do_api_secret
-DROPLET_ID = '448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
+DROPLET_ID = '0' #'448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
 HIGH_USAGE = 's-v8cpu-16gb-amd'
+SSH_HOST = ''
+SSH_USER = "root"
+SSH_KEY_PATH = 'keys/ssh.key'
+SSH_KEY_PASSPHRASE = 'keys/passphrase.txt'
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -43,15 +58,50 @@ def save_settings():
         json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users}, f)
 
 def perform_droplet_action(action_type):
-    url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
-    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
-    data = {'type': action_type}
-    response = requests.post(url, headers=headers, json=data)
-    
-    if response.status_code == 201:
-        return "Action initiated successfully."
+    if action_type == 'power_off':
+        return ssh_power_off()
     else:
-        return f"❌ Failed to perform action: {response.content.decode()}"
+        url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
+        headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
+        data = {'type': action_type}
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 201:
+            return "Action initiated successfully."
+        else:
+            return f"❌ Failed to perform action: {response.content.decode()}"
+        
+
+def ssh_power_off():
+    try:
+        # Set up the SSH client
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # Load the private key
+        private_key = paramiko.RSAKey.from_private_key_file(SSH_KEY_PATH, password=SSH_KEY_PASSPHRASE)
+
+        # Connect to the server
+        ssh.connect(SSH_HOST, username=SSH_USER, pkey=private_key)
+
+        # Execute the commands
+        commands = [
+            'ping 1.1.1.1'
+            #'sudo systemctl stop wings',
+            #'sudo systemctl stop pteroq',
+            #'sudo shutdown now'
+        ]
+
+        for command in commands:
+            stdin, stdout, stderr = ssh.exec_command(command)
+            print(f"Executing: {command}")
+            print(stdout.read().decode())
+            print(stderr.read().decode())
+
+        ssh.close()
+        return "Power off initiated successfully via SSH."
+    except Exception as e:
+        return f"❌ Failed to power off via SSH: {str(e)}"
 
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -69,9 +119,12 @@ class DropletManagementView(ui.View):
         super().__init__(timeout=None)
 
     async def check_permissions(self, interaction):
-        if not authorized_roles and not authorized_users:
-            return True
-        if any(role.id in authorized_roles for role in interaction.user.roles) or interaction.user.id in authorized_users:
+        has_permission = (
+            not authorized_roles and not authorized_users or
+            any(role.id in authorized_roles for role in interaction.user.roles) or
+            interaction.user.id in authorized_users
+        )
+        if has_permission:
             return True
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
@@ -80,7 +133,6 @@ class DropletManagementView(ui.View):
     async def resize_super(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", HIGH_USAGE)
-
 
     @ui.button(label="Peak Usage (4vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_high")
     async def resize_high(self, interaction: discord.Interaction, button: discord.ui.Button):
