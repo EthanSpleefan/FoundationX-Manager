@@ -10,6 +10,8 @@ import paramiko
 import io
 import sys
 import platform
+import psutil
+import datetime
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
@@ -32,9 +34,9 @@ DROPLET_ID = '0' #'448886902' #set this to your droplet id you can get this from
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
 HIGH_USAGE = 's-v8cpu-16gb-amd'
-SSH_HOST = ''
+SSH_HOST = '170.64.141.254'
 SSH_USER = "root"
-SSH_KEY_PATH = 'keys/ssh.key'
+SSH_KEY_PATH = 'keys/sshkey.pem'
 SSH_KEY_PASSPHRASE = 'keys/passphrase.txt'
 
 intents = discord.Intents.default()
@@ -255,6 +257,32 @@ async def set_roles(ctx, *role_ids):
         await ctx.send("ERROR ❌: You are not authorized to access this function!")
         print(f"Authorized Roles: {authorized_roles}")
         print(f"Authorized Users: {authorized_users}")
+
+@bot.tree.command(name='uptime', description="Check the uptime of the bot!")
+async def uptime(interaction: discord.Interaction):
+    if interaction.user.id in authorized_users or any(role.id in authorized_roles for role in interaction.user.roles):
+        uptime_seconds = int(psutil.time.time() - psutil.boot_time())
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        uptime_string = f"{hours} hours, {minutes} minutes"
+        await interaction.response.send_message(f"Bot uptime: {uptime_string}")
+    else:
+        await interaction.response.send_message("You don't have permission to use this command.")
+
+
+@bot.tree.command(name='reboot', description="Reboot the hosting device. Authorized Users Only.")
+async def reboot(interaction: discord.Interaction):
+    authorized_user_id = 980374069109227570  
+    if interaction.user.id == authorized_user_id:
+        try:
+            import os
+            os.system('sudo reboot')
+            await interaction.response.send_message("Reboot command executed successfully ✅. The server will restart momentarily ⚡.")
+        except Exception as e:
+            await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
+    else:
+        await interaction.response.send_message("You don't have permission to use this command 🔒.")
+
 
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
