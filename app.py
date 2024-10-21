@@ -11,6 +11,7 @@ import sys
 import platform
 import psutil
 import datetime
+import subprocess
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
@@ -277,19 +278,19 @@ async def uptime(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You don't have permission to use this command.")
 
-
 @bot.tree.command(name='reboot', description="Reboot the hosting device. Authorized Users Only.")
 async def reboot(interaction: discord.Interaction):
-    authorized_user_id = 980374069109227570  
+    authorized_user_id = 980374069109227570  # Replace with the actual authorized user ID
     if interaction.user.id == authorized_user_id:
         try:
-            import os
-            os.system('sudo reboot')
+            # Use sudo with NOPASSWD option for the reboot command
+            subprocess.run(['sudo', 'reboot'], check=True)
             await interaction.response.send_message("Reboot command executed successfully ✅. The device will restart momentarily ⚡.")
-        except Exception as e:
+        except subprocess.CalledProcessError as e:
             await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
     else:
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
+
 
 
 @bot.command(name='add_user')
