@@ -6,7 +6,6 @@ from discord.ext import commands
 from discord import ui
 import asyncio
 import ping3 
-import paramiko
 import io
 import sys
 import platform
@@ -22,8 +21,8 @@ with open('keys/digitaloceanapi.key', 'r') as file:
 with open('keys/discordapi.key', 'r') as file:
     discord_api_secret = file.read().strip()
 
-with open('keys/vinnycommand.key', 'r') as file:
-    VINNY_COMMAND = file.read().strip()
+with open('keys/sudo_command.key', 'r') as file:
+    sudo_command = file.read().strip()
 
 #Setup Variables
 
@@ -32,10 +31,14 @@ DROPLET_ID = '0' #'448886902' #set this to your droplet id you can get this from
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
 HIGH_USAGE = 's-v8cpu-16gb-amd'
+<<<<<<< Updated upstream
 SSH_HOST = ''
 SSH_USER = "root"
 SSH_KEY_PATH = 'keys/ssh.key'
 SSH_KEY_PASSPHRASE = 'keys/passphrase.txt'
+=======
+
+>>>>>>> Stashed changes
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -58,9 +61,6 @@ def save_settings():
         json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users}, f)
 
 def perform_droplet_action(action_type):
-    if action_type == 'power_off':
-        return ssh_power_off()
-    else:
         url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
         headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
         data = {'type': action_type}
@@ -72,36 +72,6 @@ def perform_droplet_action(action_type):
             return f"❌ Failed to perform action: {response.content.decode()}"
         
 
-def ssh_power_off():
-    try:
-        # Set up the SSH client
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-        # Load the private key
-        private_key = paramiko.RSAKey.from_private_key_file(SSH_KEY_PATH, password=SSH_KEY_PASSPHRASE)
-
-        # Connect to the server
-        ssh.connect(SSH_HOST, username=SSH_USER, pkey=private_key)
-
-        # Execute the commands
-        commands = [
-            'ping 1.1.1.1'
-            #'sudo systemctl stop wings',
-            #'sudo systemctl stop pteroq',
-            #'sudo shutdown now'
-        ]
-
-        for command in commands:
-            stdin, stdout, stderr = ssh.exec_command(command)
-            print(f"Executing: {command}")
-            print(stdout.read().decode())
-            print(stderr.read().decode())
-
-        ssh.close()
-        return "Power off initiated successfully via SSH."
-    except Exception as e:
-        return f"❌ Failed to power off via SSH: {str(e)}"
 
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -163,7 +133,7 @@ class DropletManagementView(ui.View):
         view = ConfirmationView(action_type, size)
         await interaction.response.send_message(
             f"Are you sure you want to {action_type} the droplet?",
-            ephemeral=True,
+            ephemeral=False,
             view=view
         )
 
@@ -179,12 +149,12 @@ class ConfirmationView(ui.View):
             result = resize_droplet(self.size)
         else:
             result = perform_droplet_action(self.action_type)
-        await interaction.response.send_message(result, ephemeral=True)
+        await interaction.response.send_message(result, ephemeral=False)
         self.stop()
 
     @ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Action canceled.", ephemeral=True)
+        await interaction.response.send_message("Action canceled.", ephemeral=False)
         self.stop()
 
 async def create_embed(ctx_or_interaction):
@@ -206,7 +176,7 @@ async def create_embed(ctx_or_interaction):
 
 @bot.event
 async def on_message(message):
-    if message.content.lower() == VINNY_COMMAND:
+    if message.content.lower() == sudo_command:
         await message.delete()
         sent_message = await message.channel.send("Action confirmed! Performing the requested operation...")
         await asyncio.sleep(4)
@@ -231,7 +201,7 @@ async def create_embed_command(ctx):
 async def embed_command(ctx):
     await create_embed(ctx)
 
-@bot.command(name="reload")
+@bot.tree.command(name="reload", description="Reload the settings from the settings.json file.")
 async def reload_json(ctx):
     global authorized_roles, authorized_users
     settings = load_settings()
@@ -256,6 +226,35 @@ async def set_roles(ctx, *role_ids):
         print(f"Authorized Roles: {authorized_roles}")
         print(f"Authorized Users: {authorized_users}")
 
+<<<<<<< Updated upstream
+=======
+@bot.tree.command(name='uptime', description="Check the uptime of the bot!")
+async def uptime(interaction: discord.Interaction):
+    if interaction.user.id in authorized_users or any(role.id in authorized_roles for role in interaction.user.roles):
+        uptime_seconds = int(psutil.time.time() - psutil.boot_time())
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        uptime_string = f"{hours} hours, {minutes} minutes"
+        await interaction.response.send_message(f"Bot uptime: {uptime_string}")
+    else:
+        await interaction.response.send_message("You don't have permission to use this command.")
+
+
+@bot.tree.command(name='reboot', description="Reboot the hosting device. Authorized Users Only.")
+async def reboot(interaction: discord.Interaction):
+    authorized_user_id = 980374069109227570  
+    if interaction.user.id == authorized_user_id:
+        try:
+            import os
+            os.system('sudo reboot')
+            await interaction.response.send_message("Reboot command executed successfully ✅. The device will restart momentarily ⚡.")
+        except Exception as e:
+            await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
+    else:
+        await interaction.response.send_message("You don't have permission to use this command 🔒.")
+
+
+>>>>>>> Stashed changes
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
     global authorized_users
@@ -283,7 +282,7 @@ async def slash_panel_link(interaction: discord.Interaction):
 
 @bot.tree.command(name="ping", description="Ping the server to check if it is accessible from the public internet.")
 async def ping_server(interaction: discord.Interaction):
-    ip_address = "1.1.1.1"
+    ip_address = "170.64.141.254"
     
     try:
         # Use ping3 to ping the server
