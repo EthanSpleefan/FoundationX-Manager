@@ -9,6 +9,8 @@ import ping3
 import io
 import sys
 import platform
+import psutil
+import datetime
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
@@ -27,18 +29,13 @@ with open('keys/sudo_command.key', 'r') as file:
 #Setup Variables
 
 API_TOKEN = do_api_secret
-DROPLET_ID = '0' #'448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
+DROPLET_ID = '448886902' #'448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
 LOW_USAGE = 's-2vcpu-8gb-amd'
 PEAK_USAGE = 's-4vcpu-16gb-amd'
 HIGH_USAGE = 's-v8cpu-16gb-amd'
-<<<<<<< Updated upstream
-SSH_HOST = ''
-SSH_USER = "root"
-SSH_KEY_PATH = 'keys/ssh.key'
-SSH_KEY_PASSPHRASE = 'keys/passphrase.txt'
-=======
+last_resize_time = None
+reboot_scheduled = False
 
->>>>>>> Stashed changes
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -73,6 +70,46 @@ def perform_droplet_action(action_type):
         
 
 
+async def schedule_reboot_check(interaction):
+    global last_resize_time, reboot_scheduled
+    last_resize_time = datetime.now()
+    reboot_scheduled = False
+    await asyncio.sleep(300)  # Wait for 5 minutes
+    
+    if not reboot_scheduled:
+        await prompt_auto_reboot(interaction)
+
+async def prompt_auto_reboot(interaction):
+    embed = discord.Embed(
+        title="⚠️ Server AutoReboot",
+        description="The server has not been rebooted since the last resize operation. Would you like to reboot now?",
+        color=discord.Color.yellow()
+    )
+    view = AutoRebootView()
+    await interaction.channel.send(embed=embed, view=view)
+
+class AutoRebootView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)  # 5 minutes timeout
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return (
+            interaction.user.id in authorized_users or
+            any(role.id in authorized_roles for role in interaction.user.roles)
+        )
+
+    @ui.button(label="Confirm Reboot", style=discord.ButtonStyle.danger)
+    async def confirm_reboot(self, interaction: discord.Interaction, button: discord.ui.Button):
+        result = perform_droplet_action("reboot")
+        await interaction.response.send_message(f"Reboot initiated: {result}", ephemeral=False)
+        self.stop()
+
+    @ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_reboot(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Auto-reboot canceled.", ephemeral=False)
+        self.stop()
+
+
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
@@ -83,6 +120,7 @@ def resize_droplet(new_size):
         return "Droplet resizing initiated successfully."
     else:
         return f"❌ Failed to resize droplet: {response.content.decode()}"
+
 
 class DropletManagementView(ui.View):
     def __init__(self):
@@ -147,6 +185,8 @@ class ConfirmationView(ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.action_type == "resize":
             result = resize_droplet(self.size)
+            if "successfully" in result:
+                asyncio.create_task(schedule_reboot_check(interaction))
         else:
             result = perform_droplet_action(self.action_type)
         await interaction.response.send_message(result, ephemeral=False)
@@ -226,8 +266,6 @@ async def set_roles(ctx, *role_ids):
         print(f"Authorized Roles: {authorized_roles}")
         print(f"Authorized Users: {authorized_users}")
 
-<<<<<<< Updated upstream
-=======
 @bot.tree.command(name='uptime', description="Check the uptime of the bot!")
 async def uptime(interaction: discord.Interaction):
     if interaction.user.id in authorized_users or any(role.id in authorized_roles for role in interaction.user.roles):
@@ -254,7 +292,6 @@ async def reboot(interaction: discord.Interaction):
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
 
 
->>>>>>> Stashed changes
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
     global authorized_users
