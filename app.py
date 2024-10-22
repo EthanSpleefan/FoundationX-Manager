@@ -227,7 +227,7 @@ async def on_message(message):
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FX Systems"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FoundationX Backend"))
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
