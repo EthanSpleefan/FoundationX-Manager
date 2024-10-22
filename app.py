@@ -290,7 +290,8 @@ async def reboot(interaction: discord.Interaction):
             await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
     else:
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
-@bot.tree.command(name='halon release', description="WARNING ⚠️ EMERGENCY HALON RELEASE❗")
+
+@bot.tree.command(name='halon', description="WARNING ⚠️ EMERGENCY HALON RELEASE❗")
 async def halon(interaction: discord.Interaction):
     if interaction.user.id is not None:
         await interaction.response.send_message("HALON RELEASE ACTIVATED!")
