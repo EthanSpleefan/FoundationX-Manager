@@ -290,8 +290,37 @@ async def reboot(interaction: discord.Interaction):
             await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
     else:
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
-
-
+@bot.tree.command(name='halon release', description="WARNING ⚠️ EMERGENCY HALON RELEASE❗")
+async def halon(interaction: discord.Interaction):
+    if interaction.user.id is not None:
+        await interaction.response.send_message("HALON RELEASE ACTIVATED!")
+        
+        # Shutdown the Droplet
+        shutdown_response = perform_droplet_action('shutdown')
+        await interaction.followup.send(f"Droplet shutdown initiated: {shutdown_response}")
+        
+        # Wait for 30 seconds
+        await asyncio.sleep(30)
+        
+        # Resize the Droplet to low usage size
+        resize_response = perform_droplet_action('resize', size=LOW_USAGE)
+        await interaction.followup.send(f"Droplet resize initiated: {resize_response}")
+        
+        # Ping the server
+        ip_address = "170.64.141.254"
+        delay = ping3.ping(ip_address)
+        
+        if delay is None:
+            # If the server doesn't respond, run sudo shutdown locally
+            try:
+                subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
+                await interaction.followup.send("Server did not respond. Local shutdown initiated.")
+            except subprocess.CalledProcessError as e:
+                await interaction.followup.send(f"Error executing local shutdown: {str(e)}")
+        else:
+            await interaction.followup.send(f"Server responded to ping, Time: {delay * 1000:.2f} ms")
+    else:
+        await interaction.response.send_message("Error Halon Release Failed!") 
 
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
