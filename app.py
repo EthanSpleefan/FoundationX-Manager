@@ -12,14 +12,89 @@ import platform
 import psutil
 import datetime
 import subprocess
+import discord.ext
+from discord.ext import tasks
+import sqlite3
+
+
+
+DROPLET_ID = '448886902' 
+FX_API_URL = 'https://api.foundationxservers.com/'
+LOG_CHANNEL_ID = 1270361238697672736
+CHECK_INTERVAL = 500  # 500seconds = 8.33 minutes
+last_resize_time = None
+reboot_scheduled = False
+disable_resizing = False
+
+PLANS = {
+    'not_set': None,
+    'off': 's-1vcpu-2gb-intel', #done 0.024/hr
+    'low': 's-2vcpu-4gb-amd', #done 0.042/hr
+    'medium': 's-4vcpu-8gb-amd', #done 0.083/hr
+    'high': 's-4vcpu-16gb-amd', #done $0.125/hr
+    'ultra': 's-v8cpu-16gb-amd' #done 0.167/hr
+}
+
+current_plan = PLANS['not_set']
+
+PLAN_PRICES_USD = {
+    's-2vcpu-8gb-intel': 0.024,  # off
+    's-2vcpu-8gb-amd': 0.042,   # low
+    's-4vcpu-16gb-amd': 0.063,  # medium
+    's-v8cpu-16gb-amd': 0.125, # high
+    's-v8cpu-16gb-amd': 0.167  # ultra 
+}
+
+AVERAGE_MONTHLY_COST_USD = 84.00
+HOURS_IN_MONTH = 24 * 30  # Assuming 30 days in a month
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
+def setup_database():
+    conn = sqlite3.connect('server_resizes.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS resizes (
+            id INTEGER PRIMARY KEY,
+            plan TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            duration INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def log_resize(plan, duration):
+    conn = sqlite3.connect('server_resizes.db')
+    c = conn.cursor()
+    start_time = datetime.datetime.now().isoformat()
+    c.execute('INSERT INTO resizes (plan, start_time, duration) VALUES (?, ?, ?)',
+              (plan, start_time, duration))
+    conn.commit()
+    conn.close()
+
+
+
+async def get_current_exchange_rate(base_currency='USD', target_currency='AUD'):
+    """Fetches the current exchange rate from the API."""
+    url = f'https://api.exchangerate-api.com/v4/latest/{base_currency}'
+    response = requests.get(url)
+    data = response.json()
+    
+    if response.status_code == 200:
+        return data['rates'][target_currency]
+    else:
+        print(f"Error fetching exchange rate: {data.get('error', 'Unknown error')}")
+        return None
+    
+
+
 with open('keys/digitaloceanapi.key', 'r') as file:
-    do_api_secret = file.read().strip()
+    DigitalOceanSecret = file.read().strip()
 
 with open('keys/discordapi.key', 'r') as file:
     discord_api_secret = file.read().strip()
@@ -28,14 +103,7 @@ with open('keys/sudo_command.key', 'r') as file:
     sudo_command = file.read().strip()
 
 #Setup Variables
-
-API_TOKEN = do_api_secret
-DROPLET_ID = '448886902' #'448886902' #set this to your droplet id you can get this from the dashboard by copying the link for example https://cloud.digitalocean.com/droplets/448886902/graphs?i=89d5ef&period=hour and then 448886902 would be your id
-LOW_USAGE = 's-2vcpu-8gb-amd'
-PEAK_USAGE = 's-4vcpu-16gb-amd'
-HIGH_USAGE = 's-v8cpu-16gb-amd'
-last_resize_time = None
-reboot_scheduled = False
+API_TOKEN = DigitalOceanSecret
 
 
 intents = discord.Intents.default()
@@ -68,10 +136,27 @@ def perform_droplet_action(action_type):
             return "Action initiated successfully."
         else:
             return f"❌ Failed to perform action: {response.content.decode()}"
-        
+
+async def send_embed(channel, title, description, color=discord.Color.blue()):
+    embed = discord.Embed(title=title, description=description, color=color)
+    await channel.send(embed=embed)
 
 
-async def schedule_reboot_check(interaction):
+async def check_active_players():
+    try:
+        response = requests.get(FX_API_URL+'server-stats?page=0&perPage=20')
+        if response.status_code == 200:
+            data = response.json()
+            total_players = sum(item['playerCount'] for item in data['items'])
+            return total_players
+        else:
+            raise Exception(f"Failed to fetch player data. Status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error fetching player data: {str(e)}")
+        return 0
+
+
+"""async def schedule_reboot_check(interaction):
     global last_resize_time, reboot_scheduled
     last_resize_time = datetime.now()
     reboot_scheduled = False
@@ -79,6 +164,7 @@ async def schedule_reboot_check(interaction):
     
     if not reboot_scheduled:
         await prompt_auto_reboot(interaction)
+
 
 async def prompt_auto_reboot(interaction):
     embed = discord.Embed(
@@ -110,6 +196,7 @@ class AutoRebootView(ui.View):
         await interaction.response.send_message("Auto-reboot canceled.", ephemeral=False)
         self.stop()
 
+"""
 
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -138,20 +225,25 @@ class DropletManagementView(ui.View):
         await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return False
     
-    @ui.button(label="High Usage (8vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_super")
+    @ui.button(label="Super Usage (8vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_super")
     async def resize_super(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
-            await self.ask_for_confirmation(interaction, "resize", HIGH_USAGE)
+            await self.ask_for_confirmation(interaction, "resize", PLANS["ultra"])
 
     @ui.button(label="Peak Usage (4vcpu-16gb)", style=discord.ButtonStyle.primary, custom_id="resize_high")
     async def resize_high(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
-            await self.ask_for_confirmation(interaction, "resize", PEAK_USAGE)
+            await self.ask_for_confirmation(interaction, "resize", PLANS["high"])
 
     @ui.button(label="Low Usage (2vcpu-8gb)", style=discord.ButtonStyle.primary, custom_id="resize_low")
     async def resize_low(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
-            await self.ask_for_confirmation(interaction, "resize", LOW_USAGE)
+            await self.ask_for_confirmation(interaction, "resize", PLANS['low'])
+
+    @ui.button(label="Offline Plan (DO NOT START SERVER)", style=discord.ButtonStyle.primary, custom_id="resize_offline_mode")
+    async def resize_offline_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if await self.check_permissions(interaction):
+            await self.ask_for_confirmation(interaction, "resize", PLANS['off'])
 
     @ui.button(label="Power On", style=discord.ButtonStyle.success, custom_id="poweron")
     async def power_on(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -215,6 +307,98 @@ async def create_embed(ctx_or_interaction):
     else:
         await ctx_or_interaction.send(embed=embed, view=view)
 
+
+async def log_action(message):
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    await channel.send(message)
+
+@tasks.loop(seconds=CHECK_INTERVAL)
+async def monitor_server():
+    global current_plan
+    global disable_resizing
+    now = datetime.datetime.now()
+    current_hour = now.hour
+    active_players = await check_active_players()
+    
+    if disable_resizing:
+        
+        #await log_action(f"Autoresizer is disabled. Skipping resize.")
+        return
+
+    if 16 <= current_hour < 23:  # Peak hours: 4:30 PM to 11:30 PM
+        target_plan = PLANS['high']  # High plan for peak hours
+    elif 8 <= current_hour < 16:  # Moderate-use hours: 8:30 AM to 4:30 PM
+        target_plan = PLANS['low'] if active_players == 0 else PLANS['high']
+    else:  # Extreme low-use/off hours: 11:30 PM to 8:30 AM
+        target_plan = PLANS['off'] if active_players == 0 else PLANS['low']
+
+    if target_plan == current_plan:
+        print("Current Plan == Target Plan")
+        return
+
+    if active_players in (0, 1):
+        # Wait for 50 seconds to confirm the player count
+        await asyncio.sleep(50)
+        active_players = await check_active_players()
+
+        if active_players in (0, 1):
+            try:
+                # Resize server
+                resize_droplet(target_plan)
+                
+                # Log the action to the database
+                duration = 0  # Placeholder for duration, adjust as needed
+                log_resize(target_plan, duration)
+                
+                # Send embed notification
+                channel = bot.get_channel(LOG_CHANNEL_ID)  # Replace with your channel ID
+                await send_embed(channel, "Server Resized", f"Server resized to plan: {target_plan} at {now}. Active players: {active_players}.")
+
+                # Update current_plan
+                current_plan = target_plan
+                
+                # Schedule reboot 
+                await asyncio.sleep(80)
+                if target_plan != PLANS['off']:
+                    perform_droplet_action("reboot")
+                    await send_embed(channel, "Server Rebooted", f"Server rebooted after resizing to {target_plan} at {now}.")
+                else:
+                    await send_embed(channel, "Server Off", "Server resized to 'off' plan; will not reboot until the next day.")
+            except Exception as e:
+                await log_action(f"Error resizing server: {str(e)}")
+        else:
+            print("""log_action(f"No resizing needed. Active players: {active_players} at {now}.")""")
+    else:
+        print("""log_action(f"No resizing needed. Active players: {active_players} at {now}.")""")
+
+
+
+@bot.tree.command(name="disable_auto", description="Temporarily disable auto-resizing for a specified duration in hours.")
+async def toggle_disable_resizing(interaction: discord.Interaction, hours: int):
+    global disable_resizing
+    disable_resizing = True  # Set to True to disable auto-resizing
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours.")
+    await send_embed(channel, "Auto Resizeing Disabled", f"Server auto-resizing has been disabled.")
+
+    # Wait for the specified duration in hours (converted to seconds)
+    await asyncio.sleep(hours * 3600)
+    
+    # Automatically re-enable resizing after the duration
+    disable_resizing = False 
+    await send_embed(channel, "Auto Resizeing Enabled", f"Server resizing has been re-enabled.")
+    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours and will be restored automatically.")
+
+@bot.tree.command(name="enable_auto", description="Enable auto-resizing.")
+async def cancel_disable_resizing(interaction: discord.Interaction):
+    global disable_resizing
+    if disable_resizing:
+        disable_resizing = False  # Set to False to enable auto-resizing
+        await log_action("Auto-resizing has been manually enabled again.")
+        await interaction.response.send_message("Auto-resizing has been manually enabled again.")
+    else:
+        await interaction.response.send_message("Auto-resizing is already enabled.")
+
 @bot.event
 async def on_message(message):
     if message.content.lower() == sudo_command:
@@ -231,6 +415,9 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
+        monitor_server.start()
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        await send_embed(channel, "Auto Resizer Active", f"Server auto-resizing is online.")
     except Exception as e:
         print(e)
 
@@ -241,6 +428,11 @@ async def create_embed_command(ctx):
 @bot.command(name='embed')
 async def embed_command(ctx):
     await create_embed(ctx)
+
+@bot.tree.command(name='players', description="Check the status of the server.")
+async def check_players(ctx):
+    active_players = await check_active_players()
+    await ctx.send(f"Active players: {active_players}")
 
 @bot.tree.command(name="reload", description="Reload the settings from the settings.json file.")
 async def reload_json(ctx):
@@ -304,7 +496,7 @@ async def halon(interaction: discord.Interaction):
         await asyncio.sleep(30)
         
         # Resize the Droplet to low usage size
-        resize_response = perform_droplet_action('resize', size=LOW_USAGE)
+        resize_response = perform_droplet_action('resize', size=PLANS['off'])
         await interaction.followup.send(f"Droplet resize initiated: {resize_response}")
         
         # Ping the server
@@ -362,4 +554,51 @@ async def ping_server(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"⚠️ An unexpected error occurred while pinging: {str(e)}")
 
+@bot.command(name='total_savings')
+async def total_savings(ctx, target_currency='AUD'): 
+    """Calculates and displays the total savings in USD and the specified target currency."""
+
+    conn = sqlite3.connect('server_resizes.db')
+    c = conn.cursor()
+    c.execute('SELECT plan, duration FROM resizes')
+    rows = c.fetchall()
+    conn.close()
+
+    # Calculate total cost based on the duration in hours for each plan
+    total_cost_usd = AVERAGE_MONTHLY_COST_USD 
+    for row in rows:
+        plan, duration = row
+        hours = duration / 3600  # Convert duration from seconds to hours
+        if plan in PLAN_PRICES_USD:
+            total_cost_usd -= hours * PLAN_PRICES_USD[plan] 
+
+    # Calculate total savings in USD
+    total_savings_usd = AVERAGE_MONTHLY_COST_USD - total_cost_usd
+
+    # Get the exchange rate
+    exchange_rate = await get_current_exchange_rate(target_currency=target_currency) 
+    if exchange_rate is None:
+        await ctx.send("Error fetching exchange rate. Please try again later.")
+        return
+
+    # Calculate costs and savings in the target currency
+    total_cost_target = total_cost_usd * exchange_rate
+    total_savings_target = total_savings_usd * exchange_rate
+
+    # Calculate the percentage saved
+    if AVERAGE_MONTHLY_COST_USD > 0:
+        percent_saved = (total_savings_usd / AVERAGE_MONTHLY_COST_USD) * 100
+    else:
+        percent_saved = 0
+
+    # Format the output message
+    savings_message = (
+        f"Total Cost with Auto Resizer: ${total_cost_usd:.2f} (USD) / {total_cost_target:.2f} ({target_currency})\n"
+        f"Total Savings: ${total_savings_usd:.2f} (USD) / {total_savings_target:.2f} ({target_currency})\n"
+        f"Percentage Saved: {percent_saved:.2f}%"
+    )
+    
+    await ctx.send(savings_message)
+
+setup_database()
 bot.run(discord_api_secret)
