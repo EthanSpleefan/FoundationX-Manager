@@ -17,7 +17,6 @@ from discord.ext import tasks
 import sqlite3
 
 
-
 DROPLET_ID = '448886902' 
 FX_API_URL = 'https://api.foundationxservers.com/'
 LOG_CHANNEL_ID = 1270361238697672736
@@ -35,8 +34,6 @@ PLANS = {
     'ultra': 's-v8cpu-16gb-amd' #done 0.167/hr
 }
 
-current_plan = PLANS['not_set']
-
 PLAN_PRICES_USD = {
     's-2vcpu-8gb-intel': 0.024,  # off
     's-2vcpu-8gb-amd': 0.042,   # low
@@ -45,53 +42,11 @@ PLAN_PRICES_USD = {
     's-v8cpu-16gb-amd': 0.167  # ultra 
 }
 
-AVERAGE_MONTHLY_COST_USD = 84.00
-HOURS_IN_MONTH = 24 * 30  # Assuming 30 days in a month
+current_plan = PLANS['not_set']
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-def setup_database():
-    conn = sqlite3.connect('server_resizes.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS resizes (
-            id INTEGER PRIMARY KEY,
-            plan TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            duration INTEGER
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def log_resize(plan, duration):
-    conn = sqlite3.connect('server_resizes.db')
-    c = conn.cursor()
-    start_time = datetime.datetime.now().isoformat()
-    c.execute('INSERT INTO resizes (plan, start_time, duration) VALUES (?, ?, ?)',
-              (plan, start_time, duration))
-    conn.commit()
-    conn.close()
-
-
-
-async def get_current_exchange_rate(base_currency='USD', target_currency='AUD'):
-    """Fetches the current exchange rate from the API."""
-    url = f'https://api.exchangerate-api.com/v4/latest/{base_currency}'
-    response = requests.get(url)
-    data = response.json()
-    
-    if response.status_code == 200:
-        return data['rates'][target_currency]
-    else:
-        print(f"Error fetching exchange rate: {data.get('error', 'Unknown error')}")
-        return None
-    
-
 
 with open('keys/digitaloceanapi.key', 'r') as file:
     DigitalOceanSecret = file.read().strip()
@@ -105,26 +60,26 @@ with open('keys/sudo_command.key', 'r') as file:
 #Setup Variables
 API_TOKEN = DigitalOceanSecret
 
-
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 
-# Load or initialize settings
+# Load settings
 def load_settings():
     if os.path.exists('settings.json'):
         with open('settings.json', 'r') as f:
             return json.load(f)
-    return {'authorized_roles': [], 'authorized_users': []}
+    return {'authorized_roles': [], 'authorized_users': [], 'restart_perms': []}
 
 settings = load_settings()
 authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
 authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
+restart_perms = list(map(int, settings.get('restart_perms', [])))  # Ensure integers
 
 def save_settings():
     with open('settings.json', 'w') as f:
-        json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users}, f)
+        json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users, 'restart_perms': restart_perms}, f)
 
 def perform_droplet_action(action_type):
         url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -133,7 +88,7 @@ def perform_droplet_action(action_type):
         response = requests.post(url, headers=headers, json=data)
         
         if response.status_code == 201:
-            return "Action initiated successfully."
+            return "Action initiated successfully. ✅"
         else:
             return f"❌ Failed to perform action: {response.content.decode()}"
 
@@ -155,49 +110,6 @@ async def check_active_players():
         print(f"Error fetching player data: {str(e)}")
         return 0
 
-
-"""async def schedule_reboot_check(interaction):
-    global last_resize_time, reboot_scheduled
-    last_resize_time = datetime.now()
-    reboot_scheduled = False
-    await asyncio.sleep(300)  # Wait for 5 minutes
-    
-    if not reboot_scheduled:
-        await prompt_auto_reboot(interaction)
-
-
-async def prompt_auto_reboot(interaction):
-    embed = discord.Embed(
-        title="⚠️ Server AutoReboot",
-        description="The server has not been rebooted since the last resize operation. Would you like to reboot now?",
-        color=discord.Color.yellow()
-    )
-    view = AutoRebootView()
-    await interaction.channel.send(embed=embed, view=view)
-
-class AutoRebootView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)  # 5 minutes timeout
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return (
-            interaction.user.id in authorized_users or
-            any(role.id in authorized_roles for role in interaction.user.roles)
-        )
-
-    @ui.button(label="Confirm Reboot", style=discord.ButtonStyle.danger)
-    async def confirm_reboot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = perform_droplet_action("reboot")
-        await interaction.response.send_message(f"Reboot initiated: {result}", ephemeral=False)
-        self.stop()
-
-    @ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel_reboot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Auto-reboot canceled.", ephemeral=False)
-        self.stop()
-
-"""
-
 def resize_droplet(new_size):
     url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {API_TOKEN}'}
@@ -205,7 +117,7 @@ def resize_droplet(new_size):
     response = requests.post(url, headers=headers, json=data)
     
     if response.status_code == 201:
-        return "Droplet resizing initiated successfully."
+        return "Droplet resizing initiated successfully. ✅"
     else:
         return f"❌ Failed to resize droplet: {response.content.decode()}"
 
@@ -268,6 +180,7 @@ class DropletManagementView(ui.View):
             view=view
         )
 
+
 class ConfirmationView(ui.View):
     def __init__(self, action_type, size=None):
         super().__init__(timeout=30)
@@ -278,8 +191,6 @@ class ConfirmationView(ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.action_type == "resize":
             result = resize_droplet(self.size)
-            if "successfully" in result:
-                asyncio.create_task(schedule_reboot_check(interaction))
         else:
             result = perform_droplet_action(self.action_type)
         await interaction.response.send_message(result, ephemeral=False)
@@ -287,7 +198,7 @@ class ConfirmationView(ui.View):
 
     @ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Action canceled.", ephemeral=False)
+        await interaction.response.send_message("Action canceled. ❌", ephemeral=False)
         self.stop()
 
 async def create_embed(ctx_or_interaction):
@@ -333,7 +244,7 @@ async def monitor_server():
         target_plan = PLANS['off'] if active_players == 0 else PLANS['low']
 
     if target_plan == current_plan:
-        print("Current Plan == Target Plan")
+        print(f"Expected Error Not Resizing: {current_plan} is {target_plan}")
         return
 
     if active_players in (0, 1):
@@ -346,12 +257,8 @@ async def monitor_server():
                 # Resize server
                 resize_droplet(target_plan)
                 
-                # Log the action to the database
-                duration = 0  # Placeholder for duration, adjust as needed
-                log_resize(target_plan, duration)
-                
                 # Send embed notification
-                channel = bot.get_channel(LOG_CHANNEL_ID)  # Replace with your channel ID
+                channel = bot.get_channel(LOG_CHANNEL_ID)  
                 await send_embed(channel, "Server Resized", f"Server resized to plan: {target_plan} at {now}. Active players: {active_players}.")
 
                 # Update current_plan
@@ -371,14 +278,22 @@ async def monitor_server():
     else:
         print("""log_action(f"No resizing needed. Active players: {active_players} at {now}.")""")
 
+#Bot Commands
 
+@bot.tree.command(name="restart", description="Restart the server (Admins and Developers)")
+async def restart_server(ctx):
+    if ctx.author.id in authorized_users or any(role.id in authorized_roles for role in ctx.author.roles) or any(role.id in restart_perms for role in ctx.author.roles):
+        view = ConfirmationView("reboot")
+        await ctx.send("Are you sure you want to restart the server?", view=view)
+    else:
+        await ctx.send("You do not have permission to use this command. Please ask an admin or developer.")
 
 @bot.tree.command(name="disable_auto", description="Temporarily disable auto-resizing for a specified duration in hours.")
 async def toggle_disable_resizing(interaction: discord.Interaction, hours: int):
     global disable_resizing
     disable_resizing = True  # Set to True to disable auto-resizing
     channel = bot.get_channel(LOG_CHANNEL_ID)
-    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours.")
+    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours. ⛔")
     await send_embed(channel, "Auto Resizeing Disabled", f"Server auto-resizing has been disabled.")
 
     # Wait for the specified duration in hours (converted to seconds)
@@ -387,7 +302,7 @@ async def toggle_disable_resizing(interaction: discord.Interaction, hours: int):
     # Automatically re-enable resizing after the duration
     disable_resizing = False 
     await send_embed(channel, "Auto Resizeing Enabled", f"Server resizing has been re-enabled.")
-    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours and will be restored automatically.")
+    await interaction.response.send_message(f"Auto-resizing has been disabled for {hours} hours and will be restored automatically. 🔄")
 
 @bot.tree.command(name="enable_auto", description="Enable auto-resizing.")
 async def cancel_disable_resizing(interaction: discord.Interaction):
@@ -395,9 +310,9 @@ async def cancel_disable_resizing(interaction: discord.Interaction):
     if disable_resizing:
         disable_resizing = False  # Set to False to enable auto-resizing
         await log_action("Auto-resizing has been manually enabled again.")
-        await interaction.response.send_message("Auto-resizing has been manually enabled again.")
+        await interaction.response.send_message("Auto-resizing has been manually enabled again. ✅")
     else:
-        await interaction.response.send_message("Auto-resizing is already enabled.")
+        await interaction.response.send_message("Auto-resizing is already enabled. ✅")
 
 @bot.event
 async def on_message(message):
@@ -411,7 +326,7 @@ async def on_message(message):
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FoundationX Backend"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FX Backend"))
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
@@ -420,10 +335,6 @@ async def on_ready():
         await send_embed(channel, "Auto Resizer Active", f"Server auto-resizing is online.")
     except Exception as e:
         print(e)
-
-@bot.command(name='create_embed')
-async def create_embed_command(ctx):
-    await create_embed(ctx)
 
 @bot.command(name='embed')
 async def embed_command(ctx):
@@ -483,10 +394,10 @@ async def reboot(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
 
-@bot.tree.command(name='halon', description="WARNING ⚠️ EMERGENCY HALON RELEASE❗")
+@bot.tree.command(name='halon', description="EMERGENCY HALON RELEASE❗")
 async def halon(interaction: discord.Interaction):
     if interaction.user.id is not None:
-        await interaction.response.send_message("HALON RELEASE ACTIVATED!")
+        await interaction.response.send_message("If you did this by mistake, you are gonna get grilllllled by vinny or ethan")
         
         # Shutdown the Droplet
         shutdown_response = perform_droplet_action('shutdown')
@@ -554,51 +465,4 @@ async def ping_server(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"⚠️ An unexpected error occurred while pinging: {str(e)}")
 
-@bot.command(name='total_savings')
-async def total_savings(ctx, target_currency='AUD'): 
-    """Calculates and displays the total savings in USD and the specified target currency."""
-
-    conn = sqlite3.connect('server_resizes.db')
-    c = conn.cursor()
-    c.execute('SELECT plan, duration FROM resizes')
-    rows = c.fetchall()
-    conn.close()
-
-    # Calculate total cost based on the duration in hours for each plan
-    total_cost_usd = AVERAGE_MONTHLY_COST_USD 
-    for row in rows:
-        plan, duration = row
-        hours = duration / 3600  # Convert duration from seconds to hours
-        if plan in PLAN_PRICES_USD:
-            total_cost_usd -= hours * PLAN_PRICES_USD[plan] 
-
-    # Calculate total savings in USD
-    total_savings_usd = AVERAGE_MONTHLY_COST_USD - total_cost_usd
-
-    # Get the exchange rate
-    exchange_rate = await get_current_exchange_rate(target_currency=target_currency) 
-    if exchange_rate is None:
-        await ctx.send("Error fetching exchange rate. Please try again later.")
-        return
-
-    # Calculate costs and savings in the target currency
-    total_cost_target = total_cost_usd * exchange_rate
-    total_savings_target = total_savings_usd * exchange_rate
-
-    # Calculate the percentage saved
-    if AVERAGE_MONTHLY_COST_USD > 0:
-        percent_saved = (total_savings_usd / AVERAGE_MONTHLY_COST_USD) * 100
-    else:
-        percent_saved = 0
-
-    # Format the output message
-    savings_message = (
-        f"Total Cost with Auto Resizer: ${total_cost_usd:.2f} (USD) / {total_cost_target:.2f} ({target_currency})\n"
-        f"Total Savings: ${total_savings_usd:.2f} (USD) / {total_savings_target:.2f} ({target_currency})\n"
-        f"Percentage Saved: {percent_saved:.2f}%"
-    )
-    
-    await ctx.send(savings_message)
-
-setup_database()
 bot.run(discord_api_secret)
