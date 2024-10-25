@@ -72,16 +72,16 @@ def load_settings():
     if os.path.exists('config.json'):
         with open('config.json', 'r') as f:
             return json.load(f)
-    return {'authorized_roles': [], 'droplet_perms': [], 'restart_perms': []}
+    return {'droplet_perms': [], 'authorized_users': [], 'restart_perms': []}
 
 settings = load_settings()
-authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
 droplet_perms = list(map(int, settings.get('droplet_perms', [])))  # Ensure integers
+authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
 restart_perms = list(map(int, settings.get('restart_perms', [])))  # Ensure integers
 
 def save_settings():
     with open('config.json', 'w') as f:
-        json.dump({'authorized_roles': authorized_roles, 'droplet_perms': droplet_perms, 'restart_perms': restart_perms}, f)
+        json.dump({'droplet_perms': droplet_perms, 'authorized_users': authorized_users, 'restart_perms': restart_perms}, f)
 
 def perform_droplet_action(action_type):
         url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -128,9 +128,9 @@ class DropletManagementView(ui.View):
 
     async def check_permissions(self, interaction):
         has_permission = (
-            not authorized_roles and not droplet_perms or
-            any(role.id in authorized_roles for role in interaction.user.roles) or
-            interaction.user.id in droplet_perms
+            not droplet_perms and not authorized_users or
+            any(role.id in droplet_perms for role in interaction.user.roles) or
+            interaction.user.id in authorized_users
         )
         if has_permission:
             return True
@@ -314,7 +314,7 @@ async def monitor_server():
 
 @bot.tree.command(name="restart", description="Restart the droplet, Access Restricted to Admin and Manager")
 async def restart_server(ctx):
-    if ctx.author.id in droplet_perms or any(role.id in authorized_roles for role in ctx.author.roles) or any(role.id in restart_perms for role in ctx.author.roles):
+    if ctx.author.id in authorized_users or any(role.id in droplet_perms for role in ctx.author.roles) or any(role.id in restart_perms for role in ctx.author.roles):
         view = ConfirmationView("reboot")
         await ctx.send("Are you sure you want to restart the server?", view=view)
     else:
@@ -379,10 +379,10 @@ async def check_players(ctx):
 
 @bot.tree.command(name="reload", description="Reload the settings from the config.json file.")
 async def reload_json(ctx):
-    global authorized_roles, droplet_perms
+    global droplet_perms, authorized_users
     settings = load_settings()
-    authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
     droplet_perms = list(map(int, settings.get('droplet_perms', [])))  # Ensure integers
+    authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
     await ctx.send("Reloaded settings successfully! ✅")
 
 @bot.tree.command(name="cmds", description="Display the commands for this bot!")
@@ -391,24 +391,24 @@ async def cmds(ctx):
 
 @bot.command(name='add_role')
 async def set_roles(ctx, *role_ids):
-    global authorized_roles
+    global droplet_perms
 
     # Check if the user has permission to modify roles
-    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in droplet_perms:
+    if any(role.id in droplet_perms for role in ctx.author.roles) or ctx.author.id in authorized_users:
         new_roles = list(map(int, role_ids))
         for role_id in new_roles:
-            if role_id not in authorized_roles:
-                authorized_roles.append(role_id)
+            if role_id not in droplet_perms:
+                droplet_perms.append(role_id)
         save_settings()
         await ctx.send("Authorized roles updated successfully ✅.")
     else:
         await ctx.send("ERROR ❌: You are not authorized to access this function!")
-        print(f"Authorized Roles: {authorized_roles}")
-        print(f"Authorized Users: {droplet_perms}")
+        print(f"Authorized Roles: {droplet_perms}")
+        print(f"Authorized Users: {authorized_users}")
 
 @bot.tree.command(name='uptime', description="Check the uptime of the bot!")
 async def uptime(interaction: discord.Interaction):
-    if interaction.user.id in droplet_perms or any(role.id in authorized_roles for role in interaction.user.roles):
+    if interaction.user.id in authorized_users or any(role.id in droplet_perms for role in interaction.user.roles):
         uptime_seconds = int(psutil.time.time() - psutil.boot_time())
         hours, remainder = divmod(uptime_seconds, 3600)
         minutes, _ = divmod(remainder, 60)
@@ -466,18 +466,18 @@ async def halon(interaction: discord.Interaction):
 
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
-    global droplet_perms
-    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in droplet_perms:
+    global authorized_users
+    if any(role.id in droplet_perms for role in ctx.author.roles) or ctx.author.id in authorized_users:
         new_users = list(map(int, user_ids))
         for user_id in new_users:
-            if user_id not in droplet_perms:
-                droplet_perms.append(user_id)
+            if user_id not in authorized_users:
+                authorized_users.append(user_id)
         save_settings()
         await ctx.send("Authorized users updated successfully ✅.")
     else:
         await ctx.send("ERROR ❌: You are not authorized to access this function!")
-        print(f"Authorized Roles: {authorized_roles}")
-        print(f"Authorized Users: {droplet_perms}")
+        print(f"Authorized Roles: {droplet_perms}")
+        print(f"Authorized Users: {authorized_users}")
 
 @bot.tree.command(name="embed", description="Create the embed for FoundationX droplet management")
 async def slash_create_embed(interaction: discord.Interaction):
