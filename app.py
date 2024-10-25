@@ -46,7 +46,7 @@ PLANS = {
 }
 
 PLAN_PRICES_USD = {
-    's-2vcpu-8gb-intel': 0.024,  # off
+    's-1vcpu-2gb-intel': 0.024,  # off
     's-2vcpu-8gb-amd': 0.042,   # low
     's-4vcpu-16gb-amd': 0.063,  # medium
     's-v8cpu-16gb-amd': 0.125, # high
