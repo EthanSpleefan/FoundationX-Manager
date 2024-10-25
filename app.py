@@ -15,7 +15,8 @@ import discord.ext
 from discord.ext import tasks
 import sqlite3
 import pytz
-from datetime import datetime, timedelta
+from datetime import timedelta
+import datetime
 
 DROPLET_ID = '448886902'
 FX_API_URL = 'https://api.foundationxservers.com/'
