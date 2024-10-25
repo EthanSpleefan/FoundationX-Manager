@@ -10,20 +10,30 @@ import io
 import sys
 import platform
 import psutil
-import datetime
 import subprocess
 import discord.ext
 from discord.ext import tasks
 import sqlite3
+import pytz
+from datetime import datetime, timedelta
 
-
-DROPLET_ID = '448886902' 
+DROPLET_ID = '448886902'
 FX_API_URL = 'https://api.foundationxservers.com/'
+FX_PANEL_LINK = 'https://panel.foundationxservers.com/'
 LOG_CHANNEL_ID = 1270361238697672736
 CHECK_INTERVAL = 500  # 500seconds = 8.33 minutes
 last_resize_time = None
 reboot_scheduled = False
 disable_resizing = False
+
+with open('keys/digitaloceanapi.key', 'r') as file:
+    DigitalOceanSecret = file.read().strip()
+
+with open('keys/discordapi.key', 'r') as file:
+    discord_api_secret = file.read().strip()
+
+with open('keys/sudo_command.key', 'r') as file:
+    sudo_command = file.read().strip()
 
 PLANS = {
     'not_set': None,
@@ -42,23 +52,14 @@ PLAN_PRICES_USD = {
     's-v8cpu-16gb-amd': 0.167  # ultra 
 }
 
+temporary_schedule = {}
+
 current_plan = PLANS['not_set']
+API_TOKEN = DigitalOceanSecret
 
 if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and platform.system() == 'Windows':
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-with open('keys/digitaloceanapi.key', 'r') as file:
-    DigitalOceanSecret = file.read().strip()
-
-with open('keys/discordapi.key', 'r') as file:
-    discord_api_secret = file.read().strip()
-
-with open('keys/sudo_command.key', 'r') as file:
-    sudo_command = file.read().strip()
-
-#Setup Variables
-API_TOKEN = DigitalOceanSecret
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -67,19 +68,19 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Load settings
 def load_settings():
-    if os.path.exists('settings.json'):
-        with open('settings.json', 'r') as f:
+    if os.path.exists('config.json'):
+        with open('config.json', 'r') as f:
             return json.load(f)
-    return {'authorized_roles': [], 'authorized_users': [], 'restart_perms': []}
+    return {'authorized_roles': [], 'droplet_perms': [], 'restart_perms': []}
 
 settings = load_settings()
 authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
-authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
+droplet_perms = list(map(int, settings.get('droplet_perms', [])))  # Ensure integers
 restart_perms = list(map(int, settings.get('restart_perms', [])))  # Ensure integers
 
 def save_settings():
-    with open('settings.json', 'w') as f:
-        json.dump({'authorized_roles': authorized_roles, 'authorized_users': authorized_users, 'restart_perms': restart_perms}, f)
+    with open('config.json', 'w') as f:
+        json.dump({'authorized_roles': authorized_roles, 'droplet_perms': droplet_perms, 'restart_perms': restart_perms}, f)
 
 def perform_droplet_action(action_type):
         url = f'https://api.digitalocean.com/v2/droplets/{DROPLET_ID}/actions'
@@ -95,7 +96,6 @@ def perform_droplet_action(action_type):
 async def send_embed(channel, title, description, color=discord.Color.blue()):
     embed = discord.Embed(title=title, description=description, color=color)
     await channel.send(embed=embed)
-
 
 async def check_active_players():
     try:
@@ -121,16 +121,15 @@ def resize_droplet(new_size):
     else:
         return f"❌ Failed to resize droplet: {response.content.decode()}"
 
-
 class DropletManagementView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     async def check_permissions(self, interaction):
         has_permission = (
-            not authorized_roles and not authorized_users or
+            not authorized_roles and not droplet_perms or
             any(role.id in authorized_roles for role in interaction.user.roles) or
-            interaction.user.id in authorized_users
+            interaction.user.id in droplet_perms
         )
         if has_permission:
             return True
@@ -152,7 +151,7 @@ class DropletManagementView(ui.View):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", PLANS['low'])
 
-    @ui.button(label="Offline Plan (DO NOT START SERVER)", style=discord.ButtonStyle.primary, custom_id="resize_offline_mode")
+    @ui.button(label="Offline Mode", style=discord.ButtonStyle.danger, custom_id="resize_offline_mode")
     async def resize_offline_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "resize", PLANS['off'])
@@ -172,15 +171,43 @@ class DropletManagementView(ui.View):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "reboot")
 
-    async def ask_for_confirmation(self, interaction, action_type, size=None):
-        view = ConfirmationView(action_type, size)
+async def ask_for_confirmation(self, interaction, action_type, size=None):
+    view = ConfirmationView(action_type, size)
+    try:
+        if size is not None:
+            if action_type == "resize":
+                cost_mapping = {
+                    "off": "0.024",
+                    "low": "0.042",
+                    "medium": "0.063",
+                    "high": "0.125",
+                    "ultra": "0.167"
+                }
+                target_cost = cost_mapping.get(size)
+                
+                if target_cost is None:
+                    raise ValueError(f"Invalid size provided: {size}")
+                
+                await interaction.response.send_message(
+                    f"Are you sure you want to {action_type} the droplet? This will cost {target_cost}usd/h",
+                    ephemeral=False,
+                    view=view
+                )
+                return
+
+        # If no size or not resizing, send the generic confirmation
         await interaction.response.send_message(
             f"Are you sure you want to {action_type} the droplet?",
             ephemeral=False,
             view=view
         )
 
-
+    except Exception as e:
+        print(f"Error in ask_for_confirmation: {str(e)}")
+        await interaction.response.send_message(
+            f"An error occurred while processing your request. Please try again later.",
+            ephemeral=True  # Only the user who triggered the command sees this error
+        )
 class ConfirmationView(ui.View):
     def __init__(self, action_type, size=None):
         super().__init__(timeout=30)
@@ -207,7 +234,7 @@ async def create_embed(ctx_or_interaction):
         description="Easily manage the FX DigitalOcean droplet using the functions below.",
         color=discord.Color.blue()
     )
-    embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet for optimal performance during low usage and high usage.", inline=False)
+    embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet.", inline=False)
     embed.add_field(name="⚡ Power", value="Power on/off the droplet or reboot it.", inline=False)
     embed.set_footer(text="Created by EthanSpleefan.")
 
@@ -218,7 +245,6 @@ async def create_embed(ctx_or_interaction):
     else:
         await ctx_or_interaction.send(embed=embed, view=view)
 
-
 async def log_action(message):
     channel = bot.get_channel(LOG_CHANNEL_ID)
     await channel.send(message)
@@ -227,21 +253,24 @@ async def log_action(message):
 async def monitor_server():
     global current_plan
     global disable_resizing
-    now = datetime.datetime.now()
-    current_hour = now.hour
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=10)))  # Brisbane time
+    sydney_time = now + datetime.timedelta(hours=1)  # Convert Brisbane to Sydney time (accounting for AEDT)
+    current_hour, current_minute = sydney_time.hour, sydney_time.minute
     active_players = await check_active_players()
-    
+
     if disable_resizing:
-        
-        #await log_action(f"Autoresizer is disabled. Skipping resize.")
         return
 
-    if 16 <= current_hour < 23:  # Peak hours: 4:30 PM to 11:30 PM
-        target_plan = PLANS['high']  # High plan for peak hours
-    elif 8 <= current_hour < 16:  # Moderate-use hours: 8:30 AM to 4:30 PM
-        target_plan = PLANS['low'] if active_players == 0 else PLANS['high']
-    else:  # Extreme low-use/off hours: 11:30 PM to 8:30 AM
-        target_plan = PLANS['off'] if active_players == 0 else PLANS['low']
+    if (current_hour == 7 and current_minute >= 30) or (7 < current_hour < 14):
+        target_plan = PLANS['low']  # Morning, power on at 7:30 AEST
+    elif (current_hour == 14 and current_minute >= 30) or (14 < current_hour < 16):
+        target_plan = PLANS['medium']  # Upsize to high at 14:30 AEST
+    elif (current_hour == 16 and current_minute >= 0) or (16 < current_hour < 20):
+        target_plan = PLANS['high']  # Upsize to max at 16:00 AEST
+    elif (current_hour == 20) or (20 < current_hour < 2): 
+        target_plan = PLANS['medium']  # Back to peak at 20:00 AEST
+    else:
+        target_plan = PLANS['off']  # Shut off at 02:00 AEST
 
     if target_plan == current_plan:
         print(f"Expected Error Not Resizing: {current_plan} is {target_plan}")
@@ -259,34 +288,36 @@ async def monitor_server():
                 
                 # Send embed notification
                 channel = bot.get_channel(LOG_CHANNEL_ID)  
-                await send_embed(channel, "Server Resized", f"Server resized to plan: {target_plan} at {now}. Active players: {active_players}.")
+                await send_embed(channel, "Server Resized", f"Server resized to plan: {target_plan} at {sydney_time}. Active players: {active_players}.")
 
                 # Update current_plan
                 current_plan = target_plan
                 
                 # Schedule reboot 
-                await asyncio.sleep(80)
+                await asyncio.sleep(75)
                 if target_plan != PLANS['off']:
                     perform_droplet_action("reboot")
-                    await send_embed(channel, "Server Rebooted", f"Server rebooted after resizing to {target_plan} at {now}.")
+                    await send_embed(channel, "Server Rebooted", f"Server rebooted after resizing to {target_plan} at {sydney_time}.")
                 else:
                     await send_embed(channel, "Server Off", "Server resized to 'off' plan; will not reboot until the next day.")
             except Exception as e:
                 await log_action(f"Error resizing server: {str(e)}")
         else:
-            print("""log_action(f"No resizing needed. Active players: {active_players} at {now}.")""")
+            await log_action(f"No resizing needed. Active players: {active_players} at {sydney_time}.")
     else:
-        print("""log_action(f"No resizing needed. Active players: {active_players} at {now}.")""")
+        await log_action(f"No resizing needed. Active players: {active_players} at {sydney_time}.")
 
-#Bot Commands
 
-@bot.tree.command(name="restart", description="Restart the server (Admins and Developers)")
+
+## Bot Commands
+
+@bot.tree.command(name="restart", description="Restart the droplet, Access Restricted to Admin and Manager")
 async def restart_server(ctx):
-    if ctx.author.id in authorized_users or any(role.id in authorized_roles for role in ctx.author.roles) or any(role.id in restart_perms for role in ctx.author.roles):
+    if ctx.author.id in droplet_perms or any(role.id in authorized_roles for role in ctx.author.roles) or any(role.id in restart_perms for role in ctx.author.roles):
         view = ConfirmationView("reboot")
         await ctx.send("Are you sure you want to restart the server?", view=view)
     else:
-        await ctx.send("You do not have permission to use this command. Please ask an admin or developer.")
+        await ctx.send("You do not have permission to use this command, if you believe this is an error please try again or contact a developer. If this is not an error and you need to restart the server please ask an admin, manager or developer.")
 
 @bot.tree.command(name="disable_auto", description="Temporarily disable auto-resizing for a specified duration in hours.")
 async def toggle_disable_resizing(interaction: discord.Interaction, hours: int):
@@ -345,20 +376,24 @@ async def check_players(ctx):
     active_players = await check_active_players()
     await ctx.send(f"Active players: {active_players}")
 
-@bot.tree.command(name="reload", description="Reload the settings from the settings.json file.")
+@bot.tree.command(name="reload", description="Reload the settings from the config.json file.")
 async def reload_json(ctx):
-    global authorized_roles, authorized_users
+    global authorized_roles, droplet_perms
     settings = load_settings()
     authorized_roles = list(map(int, settings.get('authorized_roles', [])))  # Ensure integers
-    authorized_users = list(map(int, settings.get('authorized_users', [])))  # Ensure integers
+    droplet_perms = list(map(int, settings.get('droplet_perms', [])))  # Ensure integers
     await ctx.send("Reloaded settings successfully! ✅")
+
+@bot.tree.command(name="cmds", description="Display the commands for this bot!")
+async def cmds(ctx):
+    await ctx.send("""""")
 
 @bot.command(name='add_role')
 async def set_roles(ctx, *role_ids):
     global authorized_roles
 
     # Check if the user has permission to modify roles
-    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in authorized_users:
+    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in droplet_perms:
         new_roles = list(map(int, role_ids))
         for role_id in new_roles:
             if role_id not in authorized_roles:
@@ -368,11 +403,11 @@ async def set_roles(ctx, *role_ids):
     else:
         await ctx.send("ERROR ❌: You are not authorized to access this function!")
         print(f"Authorized Roles: {authorized_roles}")
-        print(f"Authorized Users: {authorized_users}")
+        print(f"Authorized Users: {droplet_perms}")
 
 @bot.tree.command(name='uptime', description="Check the uptime of the bot!")
 async def uptime(interaction: discord.Interaction):
-    if interaction.user.id in authorized_users or any(role.id in authorized_roles for role in interaction.user.roles):
+    if interaction.user.id in droplet_perms or any(role.id in authorized_roles for role in interaction.user.roles):
         uptime_seconds = int(psutil.time.time() - psutil.boot_time())
         hours, remainder = divmod(uptime_seconds, 3600)
         minutes, _ = divmod(remainder, 60)
@@ -381,23 +416,26 @@ async def uptime(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You don't have permission to use this command.")
 
-@bot.tree.command(name='reboot', description="Reboot the hosting device. Authorized Users Only.")
-async def reboot(interaction: discord.Interaction):
-    authorized_user_id = 980374069109227570  # Replace with the actual authorized user ID
+@bot.tree.command(name='sudo', description="Sudo Shudown or Reboot. Hosting server not Droplet.")
+async def reboot(interaction: discord.Interaction, command_type: str):
+    authorized_user_id = 980374069109227570
     if interaction.user.id == authorized_user_id:
         try:
-            # Use sudo with NOPASSWD option for the reboot command
-            subprocess.run(['sudo', 'reboot'], check=True)
-            await interaction.response.send_message("Reboot command executed successfully ✅. The device will restart momentarily ⚡.")
+            if command_type == "reboot":
+                subprocess.run(['sudo', 'reboot'], check=True)
+                await interaction.response.send_message("Reboot command executed successfully ✅. The device will restart momentarily ⚡.")
+            elif command_type == "shutdown":
+                subprocess.run(['sudo', 'shutdown'], check=True)
+                await interaction.response.send_message("Shutdown command executed successfully ✅. The device will shutdown now⚡.")
         except subprocess.CalledProcessError as e:
-            await interaction.response.send_message(f"Error executing reboot command: {str(e)}")
+            await interaction.response.send_message(f"Error executing sudo {command_type} command: {str(e)}")
     else:
         await interaction.response.send_message("You don't have permission to use this command 🔒.")
 
 @bot.tree.command(name='halon', description="EMERGENCY HALON RELEASE❗")
 async def halon(interaction: discord.Interaction):
     if interaction.user.id is not None:
-        await interaction.response.send_message("If you did this by mistake, you are gonna get grilllllled by vinny or ethan")
+        await interaction.response.send_message("If you did this by mistake then you messed up :p")
         
         # Shutdown the Droplet
         shutdown_response = perform_droplet_action('shutdown')
@@ -415,7 +453,6 @@ async def halon(interaction: discord.Interaction):
         delay = ping3.ping(ip_address)
         
         if delay is None:
-            # If the server doesn't respond, run sudo shutdown locally
             try:
                 subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
                 await interaction.followup.send("Server did not respond. Local shutdown initiated.")
@@ -424,24 +461,22 @@ async def halon(interaction: discord.Interaction):
         else:
             await interaction.followup.send(f"Server responded to ping, Time: {delay * 1000:.2f} ms")
     else:
-        await interaction.response.send_message("Error Halon Release Failed!") 
+        await interaction.response.send_message("Error Halon Release Failed! (Thats not good)") 
 
 @bot.command(name='add_user')
 async def authorized_user(ctx, *user_ids):
-    global authorized_users
-
-    # Check if the user has permission to modify users
-    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in authorized_users:
+    global droplet_perms
+    if any(role.id in authorized_roles for role in ctx.author.roles) or ctx.author.id in droplet_perms:
         new_users = list(map(int, user_ids))
         for user_id in new_users:
-            if user_id not in authorized_users:
-                authorized_users.append(user_id)
+            if user_id not in droplet_perms:
+                droplet_perms.append(user_id)
         save_settings()
         await ctx.send("Authorized users updated successfully ✅.")
     else:
         await ctx.send("ERROR ❌: You are not authorized to access this function!")
         print(f"Authorized Roles: {authorized_roles}")
-        print(f"Authorized Users: {authorized_users}")
+        print(f"Authorized Users: {droplet_perms}")
 
 @bot.tree.command(name="embed", description="Create the embed for FoundationX droplet management")
 async def slash_create_embed(interaction: discord.Interaction):
@@ -449,7 +484,8 @@ async def slash_create_embed(interaction: discord.Interaction):
     
 @bot.tree.command(name="panel", description="FX Systems Pterodactyl Panel")
 async def slash_panel_link(interaction: discord.Interaction):
-    await interaction.response.send_message("Pterodactyl Panel: https://panel.foundationxservers.com/")
+    await interaction.response.send_message(f"Pterodactyl Panel: {FX_PANEL_LINK}")
+    await interaction.response.send_message(f"Need help? Contact an Manager or Developer for more info.")
 
 @bot.tree.command(name="ping", description="Ping the server to check if it is accessible from the public internet.")
 async def ping_server(interaction: discord.Interaction):
