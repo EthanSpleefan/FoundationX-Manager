@@ -23,6 +23,7 @@ FX_API_URL = 'https://api.foundationxservers.com/'
 FX_PANEL_LINK = 'https://panel.foundationxservers.com/'
 LOG_CHANNEL_ID = 1270361238697672736
 CHECK_INTERVAL = 500  # 500seconds = 8.33 minutes
+servers_not_resizing_count = 0
 last_resize_time = None
 reboot_scheduled = False
 disable_resizing = False
@@ -119,6 +120,8 @@ def resize_droplet(new_size):
     
     if response.status_code == 201:
         return "Droplet resizing initiated successfully. ✅"
+        if new_size == PLANS['off']:
+            return "Droplet resizing initiated successfully. ✅"
     else:
         return f"❌ Failed to resize droplet: {response.content.decode()}"
 
@@ -172,43 +175,44 @@ class DropletManagementView(ui.View):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "reboot")
 
-async def ask_for_confirmation(self, interaction, action_type, size=None):
-    view = ConfirmationView(action_type, size)
-    try:
-        if size is not None:
-            if action_type == "resize":
-                cost_mapping = {
-                    "off": "0.024",
-                    "low": "0.042",
-                    "medium": "0.063",
-                    "high": "0.125",
-                    "ultra": "0.167"
-                }
-                target_cost = cost_mapping.get(size)
-                
-                if target_cost is None:
-                    raise ValueError(f"Invalid size provided: {size}")
-                
-                await interaction.response.send_message(
-                    f"Are you sure you want to {action_type} the droplet? This will cost {target_cost}usd/h",
-                    ephemeral=False,
-                    view=view
-                )
-                return
+    async def ask_for_confirmation(self, interaction, action_type, size=None):
+        view = ConfirmationView(action_type, size)
+        try:
+            if size is not None:
+                if action_type == "resize":
+                    cost_mapping = {
+                        "s-1vcpu-2gb-intel": "0.024",
+                        "s-2vcpu-4gb-amd": "0.042",
+                        "s-4vcpu-8gb-amd": "0.083",
+                        "s-4vcpu-16gb-amd": "0.125",
+                        "s-v8cpu-16gb-amd": "0.167"
+                    }
+                    target_cost = cost_mapping.get(size)
+                    
+                    if target_cost is None:
+                        raise ValueError(f"Invalid size provided: {size}")
+                    
+                    await interaction.response.send_message(
+                        f"Are you sure you want to {action_type} the droplet? This will cost {target_cost}usd/h",
+                        ephemeral=False,
+                        view=view
+                    )
+                    return
 
-        # If no size or not resizing, send the generic confirmation
-        await interaction.response.send_message(
-            f"Are you sure you want to {action_type} the droplet?",
-            ephemeral=False,
-            view=view
-        )
+            # If no size or not resizing, send the generic confirmation
+            await interaction.response.send_message(
+                f"Are you sure you want to {action_type} the droplet?",
+                ephemeral=False,
+                view=view
+            )
 
-    except Exception as e:
-        print(f"Error in ask_for_confirmation: {str(e)}")
-        await interaction.response.send_message(
-            f"An error occurred while processing your request. Please try again later.",
-            ephemeral=True  # Only the user who triggered the command sees this error
-        )
+        except Exception as e:
+            print(f"Error in ask_for_confirmation: {str(e)}")
+            await interaction.response.send_message(
+                f"An error occurred while processing your request. Please try again later.",
+                ephemeral=True  # Only the user who triggered the command sees this error
+            )
+
 class ConfirmationView(ui.View):
     def __init__(self, action_type, size=None):
         super().__init__(timeout=30)
@@ -253,6 +257,7 @@ async def log_action(message):
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_server():
     global current_plan
+    global servers_not_resizing_count
     global disable_resizing
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=10)))  # Brisbane time
     sydney_time = now + datetime.timedelta(hours=1)  # Convert Brisbane to Sydney time (accounting for AEDT)
@@ -274,7 +279,7 @@ async def monitor_server():
         target_plan = PLANS['off']  # Shut off at 02:00 AEST
 
     if target_plan == current_plan:
-        print(f"Expected Error Not Resizing: {current_plan} is {target_plan}")
+        print(f"Not Resizing: {current_plan} is {target_plan}")
         return
 
     if active_players in (0, 1):
@@ -294,6 +299,7 @@ async def monitor_server():
                 # Update current_plan
                 current_plan = target_plan
                 
+                servers_not_resizing_count = 0
                 # Schedule reboot 
                 await asyncio.sleep(75)
                 if target_plan != PLANS['off']:
@@ -306,7 +312,11 @@ async def monitor_server():
         else:
             await log_action(f"No resizing needed. Active players: {active_players} at {sydney_time}.")
     else:
-        await log_action(f"No resizing needed. Active players: {active_players} at {sydney_time}.")
+        if servers_not_resizing_count == 0:
+            servers_not_resizing_count += 1
+            await send_embed(channel, "Server Not Resizing", f"No resizing needed. Active players: {active_players} at {sydney_time}.")
+        else:
+            return
 
 
 
@@ -362,9 +372,6 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
-        monitor_server.start()
-        channel = bot.get_channel(LOG_CHANNEL_ID)
-        await send_embed(channel, "Auto Resizer Active", f"Server auto-resizing is online.")
     except Exception as e:
         print(e)
 
