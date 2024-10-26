@@ -269,7 +269,7 @@ async def monitor_server():
 
     if (current_hour == 7 and current_minute >= 30) or (7 < current_hour < 14):
         target_plan = PLANS['low']  # Morning, power on at 7:30 AEST
-    elif (current_hour == 14 and current_minute >= 30) or (14 < current_hour < 16):
+    elif (current_hour == 13 and current_minute >= 30) or (14 < current_hour < 16):
         target_plan = PLANS['medium']  # Upsize to high at 14:30 AEST
     elif (current_hour == 16 and current_minute >= 0) or (16 < current_hour < 20):
         target_plan = PLANS['high']  # Upsize to max at 16:00 AEST
