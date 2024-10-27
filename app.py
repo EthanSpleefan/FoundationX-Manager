@@ -21,6 +21,7 @@ import datetime
 DROPLET_ID = '448886902'
 FX_API_URL = 'https://api.foundationxservers.com/'
 FX_PANEL_LINK = 'https://panel.foundationxservers.com/'
+SERVER_IP = '170.64.141.254'
 LOG_CHANNEL_ID = 1270361238697672736
 CHECK_INTERVAL = 500  # 500seconds = 8.33 minutes
 servers_not_resizing_count = 0
@@ -43,7 +44,7 @@ PLANS = {
     'low': 's-2vcpu-4gb-amd', #done 0.042/hr
     'medium': 's-4vcpu-8gb-amd', #done 0.083/hr
     'high': 's-4vcpu-16gb-amd', #done $0.125/hr
-    'ultra': 's-v8cpu-16gb-amd' #done 0.167/hr
+    'ultra': 's-v8cpu-16gb-amd' #done 0.167/hr  
 }
 
 PLAN_PRICES_USD = {
@@ -101,6 +102,7 @@ async def send_embed(channel, title, description, color=discord.Color.blue()):
 
 async def check_active_players():
     try:
+        
         response = requests.get(FX_API_URL+'server-stats?page=0&perPage=20')
         if response.status_code == 200:
             data = response.json()
@@ -241,6 +243,7 @@ async def create_embed(ctx_or_interaction):
     )
     embed.add_field(name="🔄 Resize", value="Use buttons to resize the droplet.", inline=False)
     embed.add_field(name="⚡ Power", value="Power on/off the droplet or reboot it.", inline=False)
+    embed.add_field(name="📈 Current Plan: \n", value=f"{current_plan}", inline=False)
     embed.set_footer(text="Created by EthanSpleefan.")
 
     view = DropletManagementView()
@@ -259,13 +262,23 @@ async def monitor_server():
     global current_plan
     global servers_not_resizing_count
     global disable_resizing
+    global SERVER_IP
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=10)))  # Brisbane time
     sydney_time = now + datetime.timedelta(hours=1)  # Convert Brisbane to Sydney time (accounting for AEDT)
     current_hour, current_minute = sydney_time.hour, sydney_time.minute
     active_players = await check_active_players()
 
+    
+
     if disable_resizing:
         return
+
+    delay = ping3.ping(SERVER_IP)
+    if delay is None and active_players not in (0, 1) and current_plan != PLANS['off']:
+        await send_embed(channel, f"Server is not responding. Likely DDoS.", color=discord.Color.red())
+        active_players = 0
+    else:
+        pass
 
     if (current_hour == 7 and current_minute >= 30) or (7 < current_hour < 14):
         target_plan = PLANS['low']  # Morning, power on at 7:30 AEST
@@ -307,6 +320,7 @@ async def monitor_server():
                     await send_embed(channel, "Server Rebooted", f"Server rebooted after resizing to {target_plan} at {sydney_time}.")
                 else:
                     await send_embed(channel, "Server Off", "Server resized to 'off' plan; will not reboot until the next day.")
+                    await bot.change_presence(status=discord.Status.dnd)
             except Exception as e:
                 await log_action(f"Error resizing server: {str(e)}")
         else:
@@ -368,7 +382,7 @@ async def on_message(message):
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="FX Backend"))
+    await bot.change_presence(activity=discord.Activity(status=discord.Status.online, type=discord.ActivityType.watching, name="FX Backend"))
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
@@ -497,11 +511,11 @@ async def slash_panel_link(interaction: discord.Interaction):
 
 @bot.tree.command(name="ping", description="Ping the server to check if it is accessible from the public internet.")
 async def ping_server(interaction: discord.Interaction):
-    ip_address = "170.64.141.254"
+    global SERVER_IP
     
     try:
         # Use ping3 to ping the server
-        delay = ping3.ping(ip_address)
+        delay = ping3.ping(SERVER_IP)
         if delay is not None:
             await interaction.response.send_message(f"✅ Ping successful, Time: {delay * 1000:.2f} ms")
         else:
