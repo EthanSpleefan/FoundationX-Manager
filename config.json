@@ -3,7 +3,7 @@
     "fx_api_url": "https://api.foundationxservers.com/",  
     "fx_panel_link": "https://panel.foundationxservers.com/",  
     "server_ip": "170.64.141.254",
-    "log_channel_id": 270361238697672736,  
+    "log_channel_id": 1270361238697672736,  
     "check_interval": 380,  
     "plans": {
       "not_set": "Unknown",
@@ -13,7 +13,7 @@
       "high": "s-4vcpu-16gb-amd",
       "ultra": "s-v8cpu-16gb-amd"
     },
-    "droplet_perms": ["1293514185312964678"],  
-    "authorized_users": ["980374069109227500"], 
-    "restart_perms": ["1223056154406682785"] 
+    "droplet_perms": [1293514185312964678],  
+    "authorized_users": [980374069109227500], 
+    "restart_perms": [1223056154406682785] 
 }
