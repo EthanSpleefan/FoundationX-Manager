@@ -299,73 +299,70 @@ async def ddos_check():
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_server():
     """Monitors the server and automatically resizes based on player count and time."""
-    global current_plan
-    global servers_not_resizing_count
-    global disable_resizing
-    global SERVER_IP
+    global current_plan, servers_not_resizing_count, disable_resizing, SERVER_IP
 
     if disable_resizing:
         return
 
     now = datetime.now(timezone(timedelta(hours=10)))  # Brisbane time
-    sydney_time = now + timedelta(hours=1)  # Convert Brisbane to Sydney time (accounting for AEDT)
+    sydney_time = now + timedelta(hours=1)  # Convert Brisbane to Sydney time (AEDT)
     current_hour, current_minute = sydney_time.hour, sydney_time.minute
     active_players = await check_active_players()
+    channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    delay = ping3.ping(SERVER_IP)
+    '''delay = ping3.ping(SERVER_IP)
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+
     if delay is None and active_players not in (0, 1) and current_plan != PLANS['off']:
-        channel = bot.get_channel(LOG_CHANNEL_ID)
-        await send_embed(channel, f"Server is not responding", "Server is not responding. Likely DDoS.", color=discord.Color.red())
+        await send_embed(channel, "Server Unresponsive", "Server not responding; possible DDoS attack.", color=discord.Color.red())
         active_players = 0  # Treat as no players if server is down
     elif delay is not None and active_players not in (0, 1) and current_plan != PLANS["off"]:
-        logging.info("Server Responding")
+        logging.info("Server is responding")
     else:
-        return
+        return'''
 
-    # Determine target plan based on time of day in Sydney
+    # Determine target plan based on time in Sydney
     if (current_hour == 7 and current_minute >= 30) or (7 < current_hour < 14):
-        target_plan = PLANS['low']  # Morning, power on at 7:30 AEST
+        target_plan = PLANS['low']
     elif (current_hour == 13 and current_minute >= 30) or (14 < current_hour < 16):
-        target_plan = PLANS['medium']  # Upsize to medium at 14:30 AEST
-    elif (current_hour == 16 and current_minute >= 0) or (16 < current_hour < 20):
-        target_plan = PLANS['high']  # Upsize to high at 16:00 AEST
+        target_plan = PLANS['medium']
+    elif (current_hour == 16) or (16 < current_hour < 20):
+        target_plan = PLANS['high']
     elif (current_hour == 20) or (20 < current_hour < 2):
-        target_plan = PLANS['medium']  # Back to medium at 20:00 AEST
+        target_plan = PLANS['medium']
     else:
-        target_plan = PLANS['off']  # Shut off at 02:00 AEST
+        target_plan = PLANS['low'] ## TEMP SET TO OFF WHEN FIXED ERROR ERROR - Failed to resize droplet: {"id":"unprocessable_entity","message":"This size is not available because it has a smaller disk."}
 
     if target_plan == current_plan:
-        logging.info(f"Not Resizing: Current plan ({current_plan}) matches target plan ({target_plan}).")
+        logging.info(f"No resize needed; current plan ({current_plan}) matches target ({target_plan}).")
         return
 
-    channel = bot.get_channel(LOG_CHANNEL_ID)
     if active_players in (0, 1):
-        await asyncio.sleep(50)  # Wait to confirm player count
+        await asyncio.sleep(120)
         active_players = await check_active_players()
 
         if active_players in (0, 1):
             try:
                 resize_droplet(target_plan)
-                current_plan = target_plan  # Update current plan immediately
+                current_plan = target_plan
                 servers_not_resizing_count = 0
-                await send_embed(channel, "Server Resized", f"Server resized to plan: {target_plan} at {sydney_time}. Active players: {active_players}.")
+                await send_embed(channel, "Server Resized", f"Server resized to: {target_plan} at {sydney_time}. Players: {active_players}.")
 
-                # Schedule reboot if not turning off
                 if target_plan != PLANS['off']:
-                    await asyncio.sleep(75)  # Wait before rebooting
+                    await asyncio.sleep(75)
                     perform_droplet_action("reboot")
                     await send_embed(channel, "Server Rebooted", f"Server rebooted after resizing to {target_plan} at {sydney_time}.")
                 else:
                     await send_embed(channel, "Server Off", "Server resized to 'off' plan; will not reboot until the next day.")
                     await bot.change_presence(status=discord.Status.dnd)
             except Exception as e:
-                await send_embed(channel, "Error Resizing Server", f"An error occurred while resizing the server: {str(e)}", color=discord.Color.red())
+                await send_embed(channel, "Resize Error", f"Error resizing the server: {str(e)}", color=discord.Color.red())
         else:
-            await send_embed(channel, "No resizing needed", f"Active players: {active_players} at {sydney_time}.")
+            await send_embed(channel, "Resize Skipped", f"No resize needed. Players: {active_players} at {sydney_time}.")
     else:
         if servers_not_resizing_count == 0:
             servers_not_resizing_count += 1
-            await send_embed(channel, "Server Not Resizing", f"No resizing needed. Active players: {active_players} at {sydney_time}.")
+            await send_embed(channel, "No Resize", f"No resizing required. Players: {active_players} at {sydney_time}.")
 
 # --- Bot Commands ---
 @bot.tree.command(name="restart", description="Restart the droplet (Admin/Manager only)")
@@ -411,6 +408,12 @@ async def cancel_disable_resizing(interaction: discord.Interaction):
         await interaction.response.send_message("Auto-resizing has been manually enabled again. ✅")
     else:
         await interaction.response.send_message("Auto-resizing is already enabled. ✅")
+
+@bot.tree.command(name="load_auto", description="Load's the auto-resizing loop.")
+async def reload_auto_resizing(interaction: discord.Interaction):
+    """Load the auto-resizing loop."""
+    await monitor_server()
+    await interaction.response.send_message("Auto-resizing loop has been reloaded. ✅")
 
 # --- Event Handlers ---
 @bot.event
