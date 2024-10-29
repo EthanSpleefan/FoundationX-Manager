@@ -13,7 +13,7 @@ FoundationX Manager Discord Bot.
 1. **Create a DigitalOcean API token:** [https://cloud.digitalocean.com/account/api/tokens](https://cloud.digitalocean.com/account/api/tokens)
 2. **Create a Discord bot:** [https://discord.com/developers/applications](https://discord.com/developers/applications)
 3. **Create a `keys.json` file and add the following info:**
-    **See example/keys.json**
+    **See example/example.json**
     * `digital ocean api`: Your DigitalOcean API token
     * `discord token`: Your Discord bot token
     * `confirm command`: A unique command to trigger the bot (optional)
