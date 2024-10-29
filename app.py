@@ -158,12 +158,12 @@ class ConfirmationView(ui.View):
 
     @ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global current_plan  # Access the global variable
+        global current_plan
         message = ""
         if self.action_type == "resize":
             message = resize_droplet(self.size)
             if "successfully" in message:
-                current_plan = self.size  # Update the current plan if successful
+                current_plan = self.size
         else:
             message = perform_droplet_action(self.action_type)
         await interaction.response.send_message(message, ephemeral=False)
@@ -217,7 +217,6 @@ class DropletManagementView(ui.View):
                     )
                     return
 
-            # If no size or not resizing, send the generic confirmation
             await interaction.response.send_message(
                 f"Are you sure you want to {action_type} the droplet?",
                 ephemeral=False,
@@ -267,10 +266,10 @@ class DropletManagementView(ui.View):
         if await self.check_permissions(interaction):
             await self.ask_for_confirmation(interaction, "reboot")
 
-# --- Embed Creation ---
+# --- Embed ---
 async def create_embed(ctx_or_interaction):
     """Creates and sends the main droplet management embed."""
-    global current_plan  # Access the global variable
+    global current_plan
     embed = discord.Embed(
         title="🔧 FoundationX Droplet Management",
         description="Easily manage the FX DigitalOcean droplet using the functions below.",
@@ -290,6 +289,13 @@ async def create_embed(ctx_or_interaction):
         await ctx_or_interaction.send(embed=embed, view=view)
 
 # --- Server Monitoring and Auto-Resizing ---
+'''@tasks.loop(seconds=100)
+async def ddos_check():
+    global SERVER_IP
+
+    delay = ping3.ping(SERVER_IP)
+    if delay is None or delay <'''
+
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_server():
     """Monitors the server and automatically resizes based on player count and time."""
@@ -309,7 +315,7 @@ async def monitor_server():
     delay = ping3.ping(SERVER_IP)
     if delay is None and active_players not in (0, 1) and current_plan != PLANS['off']:
         channel = bot.get_channel(LOG_CHANNEL_ID)
-        await send_embed(channel, f"Server is not responding. Likely DDoS.", color=discord.Color.red())
+        await send_embed(channel, f"Server is not responding", "Server is not responding. Likely DDoS.", color=discord.Color.red())
         active_players = 0  # Treat as no players if server is down
     elif delay is not None and active_players not in (0, 1) and current_plan != PLANS["off"]:
         logging.info("Server Responding")
@@ -450,7 +456,7 @@ async def reload_json(interaction: discord.Interaction):
         droplet_perms = permissions.get('droplet_perms', [])
         authorized_users = permissions.get('authorized_users', [])
         restart_perms = permissions.get('restart_perms', [])
-        current_plan = get_size_slug()  # Update the current plan
+        current_plan = get_size_slug()
         await interaction.response.send_message("Reloaded configs successfully! ✅")
     except Exception as e:
         logging.error(f"Error reloading configs: {e}")
@@ -507,7 +513,9 @@ async def slash_create_embed(interaction: discord.Interaction):
 async def slash_panel_link(interaction: discord.Interaction):
     """Provides a link to the Pterodactyl panel."""
     await interaction.response.send_message(f"Pterodactyl Panel: {FX_PANEL_LINK}")
-    await interaction.followup.send("Need help? Contact a Manager or Developer for more info.", ephemeral=True)
+    
+    if (interaction.user.id not in authorized_users or not any(role.id in droplet_perms for role in interaction.user.roles)):
+        await interaction.followup.send("Need help? Contact a Manager or Developer for more info.", ephemeral=True)
 
 @bot.tree.command(name="ping", description="Ping the server.")
 async def ping_server(interaction: discord.Interaction):
